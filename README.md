@@ -63,6 +63,10 @@ The easiest way to use this server is via npx without installation:
 
 3. Restart your Claude Desktop client
 
+### One-click installation for Cursor
+
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=Jira%20Tempo&config=eyJjb21tYW5kIjoibnB4IC15IEBpdmVsaW4td2ViL3RlbXBvLW1jcC1zZXJ2ZXIiLCJlbnYiOnsiVEVNUE9fQVBJX1RPS0VOIjoieW91cl90ZW1wb19hcGlfdG9rZW5faGVyZSIsIkpJUkFfQVBJX1RPS0VOIjoieW91cl9qaXJhX2FwaV90b2tlbl9oZXJlIiwiSklSQV9FTUFJTCI6InlvdXJfZW1haWxAZXhhbXBsZS5jb20iLCJKSVJBX0JBU0VfVVJMIjoiaHR0cHM6Ly95b3VyLW9yZy5hdGxhc3NpYW4ubmV0In19)
+
 ## Option 2: Local Repository Clone
 
 ### Installation
