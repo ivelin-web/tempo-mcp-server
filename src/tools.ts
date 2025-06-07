@@ -7,7 +7,7 @@ import {
   WorklogEntry
 } from './types.js';
 import config from './config.js';
-import { getCurrentUserAccountId, getIssueId } from './jira.js';
+import { getCurrentUserAccountId, getIssue } from './jira.js';
 import { formatError, getIssueKeysMap, calculateEndTime } from './utils.js';
 
 // API client for Tempo
@@ -120,9 +120,12 @@ export async function createWorklog(
 ): Promise<ToolResponse> {
   try {
     // Get issue ID and account ID
-    const issueId = await getIssueId(issueKey);
+    const issue = await getIssue(issueKey);
     const accountId = await getCurrentUserAccountId();
-    
+
+    const account = await fetchTempoAccountFromIssue(issue);
+
+    const { id: issueId } = issue;
     // Prepare payload
     const payload = {
       issueId,
@@ -131,6 +134,7 @@ export async function createWorklog(
       authorAccountId: accountId,
       description,
       ...(startTime && { startTime }),
+      ...(account && { attributes: [{ key: '_Account_', value: account.key }] })
     };
     
     // Submit the worklog
@@ -142,11 +146,13 @@ export async function createWorklog(
       const endTime = calculateEndTime(startTime, timeSpentHours);
       timeInfo = ` starting at ${startTime} and ending at ${endTime}`;
     }
-    
+
+    const accountInfo = account ? ` with account '${account.name}'` : '';
+
     return {
       content: [{
         type: "text",
-        text: `Worklog with ID ${response.data.tempoWorklogId} created successfully for ${issueKey}. Time logged: ${timeSpentHours} hours on ${date}${timeInfo}`
+        text: `Worklog with ID ${response.data.tempoWorklogId} created successfully for ${issueKey}${accountInfo}. Time logged: ${timeSpentHours} hours on ${date}${timeInfo}`
       }]
     };
   } catch (error) {
@@ -182,7 +188,9 @@ export async function bulkCreateWorklogs(
     // Process each issue's entries 
     for (const [issueKey, entries] of Object.entries(entriesByIssueKey)) {
       try {
-        const issueId = await getIssueId(issueKey);
+        const issue = await getIssue(issueKey);
+
+        const account = await fetchTempoAccountFromIssue(issue);
         
         // Format entries for API
         const formattedEntries = entries.map(entry => ({
@@ -191,8 +199,11 @@ export async function bulkCreateWorklogs(
           authorAccountId,
           description: entry.description || '',
           ...(entry.startTime && { startTime: entry.startTime }),
+          ...(account && { attributes: [{ key: '_Account_', value: account.key }] })
         }));
-        
+
+        const {id: issueId} = issue;
+
         // Submit bulk request
         const response = await api.post(`/worklogs/issue/${issueId}/bulk`, formattedEntries);
         const createdWorklogs = response.data || [];
@@ -214,7 +225,8 @@ export async function bulkCreateWorklogs(
             worklogId: created?.tempoWorklogId || null,
             success: !!created,
             startTime: entry.startTime,
-            endTime
+            endTime,
+            account: account?.name,
           });
         });
       } catch (error) {
@@ -245,10 +257,12 @@ export async function bulkCreateWorklogs(
         if (result.startTime) {
           timeInfo = ` starting at ${result.startTime}${result.endTime ? ` and ending at ${result.endTime}` : ''}`;
         }
+
+        const accountInfo = result.account ? ` for account '${result.account}'` : '';
         
         content.push({
           type: "text",
-          text: `- Issue ${result.issueKey}: ${result.timeSpentHours} hours on ${result.date}${timeInfo}`
+          text: `- Issue ${result.issueKey}: ${result.timeSpentHours} hours on ${result.date}${timeInfo}${accountInfo}`
         });
       });
     }
@@ -363,4 +377,23 @@ export async function deleteWorklog(
       content: [{ type: "text", text: `Failed to delete worklog: ${formatError(error)}` }]
     };
   }
-} 
+}
+
+/**
+ *  @returns The tempo account that is associated with the issue, if any
+ */
+async function fetchTempoAccountFromIssue({tempoAccountId}: {tempoAccountId?: string}) {
+  return tempoAccountId
+      ? (await retrieveAccount(tempoAccountId))
+      : undefined;
+}
+
+/**
+ * Retrieve account details by ID
+ */
+async function retrieveAccount(
+  id: string
+): Promise<{ key: string; name: string }> {
+    const response = await api.get(`/accounts/${id}`);
+    return response.data;
+}

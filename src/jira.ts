@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { JiraUser, issueKeySchema, issueIdSchema } from './types.js';
+import { JiraUser, issueIdSchema, idOrKeySchema } from './types.js';
 import config from './config.js';
 
 // Jira API client with authentication
@@ -51,24 +51,6 @@ export async function getCurrentUserAccountId(): Promise<string> {
 }
 
 /**
- * Get Jira issue ID from issue key
- */
-export async function getIssueId(issueKey: string): Promise<string> {
-  try {
-    // Validate issue key using the schema
-    const result = issueKeySchema().safeParse(issueKey);
-    if (!result.success) {
-      throw new Error(result.error.errors[0].message || 'Issue key validation failed');
-    }
-    
-    const response = await jiraApi.get(`/rest/api/3/issue/${issueKey}`);
-    return response.data.id;
-  } catch (error) {
-    throw formatJiraError(error, `Failed to get issue ID for ${issueKey}`);
-  }
-}
-
-/**
  * Get Jira issue key from issue ID
  */
 export async function getIssueKeyById(issueId: string | number): Promise<string> {
@@ -84,4 +66,41 @@ export async function getIssueKeyById(issueId: string | number): Promise<string>
   } catch (error) {
     throw formatJiraError(error, `Failed to get issue key for ID ${issueId}`);
   }
-} 
+}
+
+/**
+  * Get Jira issue from issue ID or key
+  */
+ export async function getIssue(idOrKey: string | number): Promise<{
+    id: string;
+    key: string;
+    /** If the issue has a Tempo account associated, this will be the account ID */
+    tempoAccountId?: string;
+ }> {
+   try {
+     // Validate issue ID using the schema
+     const result = idOrKeySchema().safeParse(idOrKey);
+     if (!result.success) {
+       throw new Error(result.error.errors[0].message || 'Issue identifier validation failed');
+     }
+
+     const response = await jiraApi.get(`/rest/api/3/issue/${idOrKey}`);
+
+     // Find the Tempo account key
+     const tempoAccountId = config.jiraApi.tempoAccountCustomFieldId
+        ? response.data.fields[`customfield_${config.jiraApi.tempoAccountCustomFieldId}`].id 
+        : undefined;
+
+     const id = response.data.id;
+     const key = response.data.key;
+
+     return {
+        id,
+        key,
+        ...tempoAccountId ? { tempoAccountId } : {}
+     }
+
+   } catch (error) {
+     throw formatJiraError(error, `Failed to get issue for ${idOrKey}`);
+   }
+}

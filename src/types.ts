@@ -8,6 +8,10 @@ export const issueIdSchema = () => z.union([
   z.string().min(1, 'Issue ID cannot be empty'),
   z.number().int().positive('Issue ID must be a positive integer')
 ]);
+export const idOrKeySchema = () => z.union([
+  issueKeySchema(),
+  issueIdSchema()
+]);
 
 // Environment validation
 export const envSchema = z.object({
@@ -15,6 +19,7 @@ export const envSchema = z.object({
   JIRA_BASE_URL: z.string().min(1, 'JIRA_BASE_URL is required'),
   JIRA_API_TOKEN: z.string().min(1, 'JIRA_API_TOKEN is required'),
   JIRA_EMAIL: z.string().min(1, 'JIRA_EMAIL is required'),
+  JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -101,6 +106,7 @@ export interface WorklogResult {
   success: boolean;
   startTime?: string;
   endTime?: string;
+  account?: string;
 }
 
 export interface WorklogError {
@@ -112,6 +118,16 @@ export interface WorklogError {
 
 export interface Config {
   tempoApi: { baseUrl: string; token: string };
-  jiraApi: { baseUrl: string; token: string; email: string };
+  jiraApi: {
+    baseUrl: string;
+    token: string;
+    email: string;
+    /**
+     * The id of the custom Jira field Id which links jira issues to Tempo accounts.
+     * This must be set if your organization has configured a mandatory tempo custom work attribute of type "Account".
+     * Example: "10234"
+     */
+    tempoAccountCustomFieldId?: string;
+  };
   server: { name: string; version: string };
 }
