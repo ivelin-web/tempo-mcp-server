@@ -179,10 +179,10 @@ Creates a new worklog for a specific Jira issue.
 ```
 Parameters:
 - issueKey: String (e.g., "PROJECT-123")
-- timeSpentHours: Number (positive)
+- timeSpentHours: Number (positive, must be in quarter-hour increments: 0.25, 0.5, 0.75, 1, 1.25, etc.)
 - date: String (YYYY-MM-DD)
 - description: String (optional)
-- startTime: String (HH:MM format, optional)
+- startTime: String (HH:MM format with 15-minute increments: :00, :15, :30, :45, optional)
 ```
 
 ### bulkCreateWorklogs
@@ -193,10 +193,10 @@ Creates multiple worklogs in a single operation.
 Parameters:
 - worklogEntries: Array of {
     issueKey: String
-    timeSpentHours: Number
+    timeSpentHours: Number (must be in quarter-hour increments: 0.25, 0.5, 0.75, 1, 1.25, etc.)
     date: String (YYYY-MM-DD)
     description: String (optional)
-    startTime: String (HH:MM format, optional)
+    startTime: String (HH:MM format with 15-minute increments: :00, :15, :30, :45, optional)
   }
 ```
 
@@ -207,10 +207,10 @@ Modifies an existing worklog.
 ```
 Parameters:
 - worklogId: String
-- timeSpentHours: Number (positive)
+- timeSpentHours: Number (positive, must be in quarter-hour increments: 0.25, 0.5, 0.75, 1, 1.25, etc.)
 - description: String (optional)
 - date: String (YYYY-MM-DD, optional)
-- startTime: String (HH:MM format, optional)
+- startTime: String (HH:MM format with 15-minute increments: :00, :15, :30, :45, optional)
 ```
 
 ### deleteWorklog
