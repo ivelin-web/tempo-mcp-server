@@ -1,6 +1,6 @@
 {
   "name": "@ivelin-web/tempo-mcp-server",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "MCP server for managing Tempo worklogs in Jira",
   "main": "build/index.js",
   "type": "module",
@@ -32,6 +32,9 @@
     "ai"
   ],
   "author": "Ivelin Ivanov <ivelinivanov1999@gmail.com>",
+  "contributors": [
+    "Filip Kalný <c_fkalny@groupon.com>"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
