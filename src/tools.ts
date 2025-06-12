@@ -133,7 +133,7 @@ export async function createWorklog(
       startDate: date,
       authorAccountId: accountId,
       description,
-      ...(startTime && { startTime }),
+      ...(startTime && { startTime: `${startTime}:00` }),
       ...(account && { attributes: [{ key: '_Account_', value: account.key }] })
     };
     
@@ -198,7 +198,7 @@ export async function bulkCreateWorklogs(
           startDate: entry.date,
           authorAccountId,
           description: entry.description || '',
-          ...(entry.startTime && { startTime: entry.startTime }),
+          ...(entry.startTime && { startTime: `${entry.startTime}:00` }),
           ...(account && { attributes: [{ key: '_Account_', value: account.key }] })
         }));
 
@@ -318,7 +318,7 @@ export async function editWorklog(
       timeSpentSeconds: Math.round(timeSpentHours * 3600),
       billableSeconds: Math.round(timeSpentHours * 3600),
       ...(description !== null && { description }),
-      ...(startTime && { startTime }),
+      ...(startTime && { startTime: `${startTime}:00` }),
     };
 
     // Update the worklog
