@@ -84,10 +84,11 @@ export async function retrieveWorklogs(
       const description = worklog.description || 'No description';
       const timeSpentHours = (worklog.timeSpentSeconds / 3600).toFixed(2);
       const date = worklog.startDate || 'Unknown';
+      const startTime = worklog.startTime || '';
       
       return {
         type: "text" as const,
-        text: `IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date} | Hours: ${timeSpentHours} | Description: ${description}`
+        text: `IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date}${startTime ? ` | StartTime: ${startTime}` : ''} | Hours: ${timeSpentHours} | Description: ${description}`
       };
     });
     
