@@ -24,7 +24,8 @@ logs/
 
 # IDE
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 *.swp
 *.swo
 .project
@@ -51,3 +52,4 @@ coverage/
 .tmp/
 temp/
 .cache/ 
+.eslintcache

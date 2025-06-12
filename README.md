@@ -36,6 +36,7 @@ The easiest way to use this server is via npx without installation:
 ### Connecting to Claude Desktop (NPX Method)
 
 1. Open your MCP client configuration file:
+
    - Claude Desktop (macOS): `~/Library/Application Support/Claude/claude_desktop_config.json`
    - Claude Desktop (Windows): `%APPDATA%\Claude\claude_desktop_config.json`
 
@@ -46,10 +47,7 @@ The easiest way to use this server is via npx without installation:
   "mcpServers": {
     "Jira_Tempo": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@ivelin-web/tempo-mcp-server"
-      ],
+      "args": ["-y", "@ivelin-web/tempo-mcp-server"],
       "env": {
         "TEMPO_API_TOKEN": "your_tempo_api_token_here",
         "JIRA_API_TOKEN": "your_jira_api_token_here",
@@ -107,9 +105,7 @@ You can run the server directly with Node by pointing to the built JavaScript fi
   "mcpServers": {
     "Jira_Tempo": {
       "command": "node",
-      "args": [
-        "/ABSOLUTE/PATH/TO/tempo-mcp-server/build/index.js"
-      ],
+      "args": ["/ABSOLUTE/PATH/TO/tempo-mcp-server/build/index.js"],
       "env": {
         "TEMPO_API_TOKEN": "your_tempo_api_token_here",
         "JIRA_API_TOKEN": "your_jira_api_token_here",
@@ -125,7 +121,8 @@ You can run the server directly with Node by pointing to the built JavaScript fi
 
 ## Getting API Tokens
 
-1. **Tempo API Token**: 
+1. **Tempo API Token**:
+
    - Go to Tempo > Settings > API Integration
    - Create a new API token with appropriate permissions
 
@@ -157,6 +154,7 @@ JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID=10234
 ```
 
 To find your custom field ID:
+
 1. Go to Jira Settings → Issues → Custom Fields
 2. Find your Tempo account field and note the ID from the URL or field configuration
 
