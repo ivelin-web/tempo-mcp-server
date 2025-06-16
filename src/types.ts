@@ -1,17 +1,20 @@
 import { z } from 'zod';
 
 // Common validation schemas
-export const dateSchema = () => z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format');
-export const timeSchema = () => z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be in HH:MM format');
-export const issueKeySchema = () => z.string().min(1, 'Issue key cannot be empty');
-export const issueIdSchema = () => z.union([
-  z.string().min(1, 'Issue ID cannot be empty'),
-  z.number().int().positive('Issue ID must be a positive integer')
-]);
-export const idOrKeySchema = () => z.union([
-  issueKeySchema(),
-  issueIdSchema()
-]);
+export const dateSchema = () =>
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format');
+export const timeSchema = () =>
+  z
+    .string()
+    .regex(/^([01]\d|2[0-3]):([0-5]\d)$/, 'Time must be in HH:MM format');
+export const issueKeySchema = () =>
+  z.string().min(1, 'Issue key cannot be empty');
+export const issueIdSchema = () =>
+  z.union([
+    z.string().min(1, 'Issue ID cannot be empty'),
+    z.number().int().positive('Issue ID must be a positive integer'),
+  ]);
+export const idOrKeySchema = () => z.union([issueKeySchema(), issueIdSchema()]);
 
 // Environment validation
 export const envSchema = z.object({
@@ -50,7 +53,9 @@ export const createWorklogSchema = z.object({
 });
 
 export const bulkCreateWorklogsSchema = z.object({
-  worklogEntries: z.array(worklogEntrySchema).min(1, 'At least one worklog entry is required'),
+  worklogEntries: z
+    .array(worklogEntrySchema)
+    .min(1, 'At least one worklog entry is required'),
 });
 
 export const editWorklogSchema = z.object({
@@ -90,7 +95,7 @@ export interface TempoWorklog {
 // MCP response interfaces
 export interface ToolResponse {
   content: Array<{
-    type: "text";
+    type: 'text';
     text: string;
   }>;
   metadata?: Record<string, any>;
@@ -114,7 +119,7 @@ export interface WorklogError {
   timeSpentHours: number;
   date: string;
   error: string;
-} 
+}
 
 export interface Config {
   tempoApi: { baseUrl: string; token: string };

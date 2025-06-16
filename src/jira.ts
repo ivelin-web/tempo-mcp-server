@@ -6,8 +6,8 @@ import config from './config.js';
 const jiraApi = axios.create({
   baseURL: config.jiraApi.baseUrl,
   headers: {
-    'Authorization': `Basic ${Buffer.from(`${config.jiraApi.email}:${config.jiraApi.token}`).toString('base64')}`,
-    'Accept': 'application/json',
+    Authorization: `Basic ${Buffer.from(`${config.jiraApi.email}:${config.jiraApi.token}`).toString('base64')}`,
+    Accept: 'application/json',
     'Content-Type': 'application/json',
   },
 });
@@ -16,9 +16,10 @@ const jiraApi = axios.create({
 function formatJiraError(error: unknown, context: string): Error {
   if (axios.isAxiosError(error)) {
     const statusCode = error.response?.status;
-    const message = error.response?.data?.message || 
-                    error.response?.data?.errorMessages?.join(', ') || 
-                    error.message;
+    const message =
+      error.response?.data?.message ||
+      error.response?.data?.errorMessages?.join(', ') ||
+      error.message;
     return new Error(`${context}: ${statusCode} - ${message}`);
   }
   return new Error(`${context}: ${(error as Error).message}`);
@@ -30,7 +31,7 @@ function formatJiraError(error: unknown, context: string): Error {
 export async function getCurrentUserAccountId(): Promise<string> {
   try {
     const response = await jiraApi.get<JiraUser[]>('/rest/api/3/user/search', {
-      params: { query: config.jiraApi.email }
+      params: { query: config.jiraApi.email },
     });
 
     const users = response.data;
@@ -39,7 +40,7 @@ export async function getCurrentUserAccountId(): Promise<string> {
     }
 
     // Find exact email match
-    const user = users.find(u => u.emailAddress === config.jiraApi.email);
+    const user = users.find((u) => u.emailAddress === config.jiraApi.email);
     if (!user) {
       throw new Error(`No exact match for email: ${config.jiraApi.email}`);
     }
@@ -53,14 +54,18 @@ export async function getCurrentUserAccountId(): Promise<string> {
 /**
  * Get Jira issue key from issue ID
  */
-export async function getIssueKeyById(issueId: string | number): Promise<string> {
+export async function getIssueKeyById(
+  issueId: string | number,
+): Promise<string> {
   try {
     // Validate issue ID using the schema
     const result = issueIdSchema().safeParse(issueId);
     if (!result.success) {
-      throw new Error(result.error.errors[0].message || 'Issue ID validation failed');
+      throw new Error(
+        result.error.errors[0].message || 'Issue ID validation failed',
+      );
     }
-    
+
     const response = await jiraApi.get(`/rest/api/3/issue/${issueId}`);
     return response.data.key;
   } catch (error) {
@@ -69,38 +74,41 @@ export async function getIssueKeyById(issueId: string | number): Promise<string>
 }
 
 /**
-  * Get Jira issue from issue ID or key
-  */
- export async function getIssue(idOrKey: string | number): Promise<{
-    id: string;
-    key: string;
-    /** If the issue has a Tempo account associated, this will be the account ID */
-    tempoAccountId?: string;
- }> {
-   try {
-     // Validate issue ID using the schema
-     const result = idOrKeySchema().safeParse(idOrKey);
-     if (!result.success) {
-       throw new Error(result.error.errors[0].message || 'Issue identifier validation failed');
-     }
+ * Get Jira issue from issue ID or key
+ */
+export async function getIssue(idOrKey: string | number): Promise<{
+  id: string;
+  key: string;
+  /** If the issue has a Tempo account associated, this will be the account ID */
+  tempoAccountId?: string;
+}> {
+  try {
+    // Validate issue ID using the schema
+    const result = idOrKeySchema().safeParse(idOrKey);
+    if (!result.success) {
+      throw new Error(
+        result.error.errors[0].message || 'Issue identifier validation failed',
+      );
+    }
 
-     const response = await jiraApi.get(`/rest/api/3/issue/${idOrKey}`);
+    const response = await jiraApi.get(`/rest/api/3/issue/${idOrKey}`);
 
-     // Find the Tempo account key
-     const tempoAccountId = config.jiraApi.tempoAccountCustomFieldId
-        ? response.data.fields[`customfield_${config.jiraApi.tempoAccountCustomFieldId}`].id 
-        : undefined;
+    // Find the Tempo account key
+    const tempoAccountId = config.jiraApi.tempoAccountCustomFieldId
+      ? response.data.fields[
+          `customfield_${config.jiraApi.tempoAccountCustomFieldId}`
+        ].id
+      : undefined;
 
-     const id = response.data.id;
-     const key = response.data.key;
+    const id = response.data.id;
+    const key = response.data.key;
 
-     return {
-        id,
-        key,
-        ...tempoAccountId ? { tempoAccountId } : {}
-     }
-
-   } catch (error) {
-     throw formatJiraError(error, `Failed to get issue for ${idOrKey}`);
-   }
+    return {
+      id,
+      key,
+      ...(tempoAccountId ? { tempoAccountId } : {}),
+    };
+  } catch (error) {
+    throw formatJiraError(error, `Failed to get issue for ${idOrKey}`);
+  }
 }
