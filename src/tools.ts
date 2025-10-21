@@ -86,6 +86,7 @@ export async function retrieveWorklogs(
 
     // Format the response
     const formattedContent = worklogs.map((worklog: any) => {
+      const tempoWorklogId = worklog.tempoWorklogId || 'Unknown';
       const issueId = worklog.issue?.id || 'Unknown';
       const issueKey = issueIdToKeyMap[issueId] || 'Unknown';
       const description = worklog.description || 'No description';
@@ -94,7 +95,7 @@ export async function retrieveWorklogs(
 
       return {
         type: 'text' as const,
-        text: `IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date} | Hours: ${timeSpentHours} | Description: ${description}`,
+        text: `TempoWorklogId: ${tempoWorklogId} | IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date} | Hours: ${timeSpentHours} | Description: ${description}`,
       };
     });
 
