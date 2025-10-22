@@ -92,10 +92,11 @@ export async function retrieveWorklogs(
       const description = worklog.description || 'No description';
       const timeSpentHours = (worklog.timeSpentSeconds / 3600).toFixed(2);
       const date = worklog.startDate || 'Unknown';
+      const startTime = worklog.startTime || '';
 
       return {
         type: 'text' as const,
-        text: `TempoWorklogId: ${tempoWorklogId} | IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date} | Hours: ${timeSpentHours} | Description: ${description}`,
+        text: `TempoWorklogId: ${tempoWorklogId} | IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date}${startTime ? ` | StartTime: ${startTime}` : ''} | Hours: ${timeSpentHours} | Description: ${description}`,
       };
     });
 
@@ -146,7 +147,7 @@ export async function createWorklog(
       startDate: date,
       authorAccountId: accountId,
       description,
-      ...(startTime && { startTime }),
+      ...(startTime && { startTime: `${startTime}:00` }),
       ...(account && {
         attributes: [{ key: '_Account_', value: account.key }],
       }),
@@ -220,7 +221,7 @@ export async function bulkCreateWorklogs(
           startDate: entry.date,
           authorAccountId,
           description: entry.description || '',
-          ...(entry.startTime && { startTime: entry.startTime }),
+          ...(entry.startTime && { startTime: `${entry.startTime}:00` }),
           ...(account && {
             attributes: [{ key: '_Account_', value: account.key }],
           }),
@@ -363,7 +364,7 @@ export async function editWorklog(
       timeSpentSeconds: Math.round(timeSpentHours * 3600),
       billableSeconds: Math.round(timeSpentHours * 3600),
       ...(description !== null && { description }),
-      ...(startTime && { startTime }),
+      ...(startTime && { startTime: `${startTime}:00` }),
     };
 
     // Update the worklog
