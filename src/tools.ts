@@ -142,7 +142,7 @@ export async function createWorklog(
     const { id: issueId } = issue;
     // Prepare payload
     const payload = {
-      issueId,
+      issueId: Number(issueId),
       timeSpentSeconds: Math.round(timeSpentHours * 3600),
       startDate: date,
       authorAccountId: accountId,
@@ -231,7 +231,7 @@ export async function bulkCreateWorklogs(
 
         // Submit bulk request
         const response = await api.post(
-          `/worklogs/issue/${issueId}/bulk`,
+          `/worklogs/issue/${Number(issueId)}/bulk`,
           formattedEntries,
         );
         const createdWorklogs = response.data || [];
