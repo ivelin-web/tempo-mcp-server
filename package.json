@@ -1,6 +1,6 @@
 {
   "name": "@ivelin-web/tempo-mcp-server",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "MCP server for managing Tempo worklogs in Jira",
   "main": "build/index.js",
   "type": "module",
