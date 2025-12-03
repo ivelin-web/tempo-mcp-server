@@ -40,6 +40,7 @@ const config: Config = {
     authType: env.JIRA_AUTH_TYPE,
     tempoAccountCustomFieldId:
       env.JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID || undefined,
+    tempoRoleCustomFieldId: env.JIRA_TEMPO_ROLE_CUSTOM_FIELD_ID || undefined,
   },
   server: {
     name: 'tempo-mcp-server',

@@ -141,6 +141,7 @@ JIRA_EMAIL          # Your Jira account email (required for basic auth)
 JIRA_BASE_URL       # Your Jira instance URL (e.g., https://your-org.atlassian.net)
 JIRA_AUTH_TYPE      # Optional: 'basic' (default) or 'bearer' for OAuth 2.0 tokens
 JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID     # Optional: Custom field ID for Tempo accounts
+JIRA_TEMPO_ROLE_CUSTOM_FIELD_ID        # Optional: Custom field ID for Tempo roles
 ```
 
 You can set these in your environment or provide them in the MCP client configuration.
@@ -178,18 +179,33 @@ For users who want to use OAuth 2.0 scoped tokens for enhanced security:
 
 Note: When using `bearer` auth, `JIRA_EMAIL` is not required as the user is identified from the token.
 
-## Tempo Account Configuration
+## Tempo Work Attributes Configuration
 
-If your Tempo instance requires worklogs to be linked to accounts, set the custom field ID that contains the account information:
+The server supports automatic linking of worklogs to Tempo work attributes (Account and Role) based on Jira issue custom fields.
+
+### Account Configuration
+
+If your Tempo instance requires worklogs to be linked to accounts:
 
 ```bash
 JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID=10234
 ```
 
-To find your custom field ID:
+### Role Configuration
+
+If your organization uses Role as a work attribute linked to issues:
+
+```bash
+JIRA_TEMPO_ROLE_CUSTOM_FIELD_ID=10235
+```
+
+### Finding Custom Field IDs
 
 1. Go to Jira Settings → Issues → Custom Fields
-2. Find your Tempo account field and note the ID from the URL or field configuration
+2. Find your Tempo Account or Role field
+3. Note the ID from the URL (e.g., `customfield_10234` means ID is `10234`)
+
+When configured, the server automatically extracts Account and Role values from Jira issues and includes them as work attributes in created worklogs.
 
 ## Available Tools
 

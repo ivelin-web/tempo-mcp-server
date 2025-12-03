@@ -137,7 +137,8 @@ export async function createWorklog(
     const issue = await getIssue(issueKey);
     const accountId = await getCurrentUserAccountId();
 
-    const account = await fetchTempoAccountFromIssue(issue);
+    const attrs = await fetchTempoAttributesFromIssue(issue);
+    const attributes = buildAttributesArray(attrs);
 
     const { id: issueId } = issue;
     // Prepare payload
@@ -148,9 +149,7 @@ export async function createWorklog(
       authorAccountId: accountId,
       description,
       ...(startTime && { startTime: `${startTime}:00` }),
-      ...(account && {
-        attributes: [{ key: '_Account_', value: account.key }],
-      }),
+      ...(attributes && { attributes }),
     };
 
     // Submit the worklog
@@ -163,13 +162,20 @@ export async function createWorklog(
       timeInfo = ` starting at ${startTime} and ending at ${endTime}`;
     }
 
-    const accountInfo = account ? ` with account '${account.name}'` : '';
+    // Build info strings for account and role
+    const attrInfo = [
+      attrs.account ? `account '${attrs.account.name}'` : '',
+      attrs.role ? `role '${attrs.role.name}'` : '',
+    ]
+      .filter(Boolean)
+      .join(' and ');
+    const withAttrInfo = attrInfo ? ` with ${attrInfo}` : '';
 
     return {
       content: [
         {
           type: 'text',
-          text: `Worklog with ID ${response.data.tempoWorklogId} created successfully for ${issueKey}${accountInfo}. Time logged: ${timeSpentHours} hours on ${date}${timeInfo}`,
+          text: `Worklog with ID ${response.data.tempoWorklogId} created successfully for ${issueKey}${withAttrInfo}. Time logged: ${timeSpentHours} hours on ${date}${timeInfo}`,
         },
       ],
     };
@@ -213,7 +219,8 @@ export async function bulkCreateWorklogs(
       try {
         const issue = await getIssue(issueKey);
 
-        const account = await fetchTempoAccountFromIssue(issue);
+        const attrs = await fetchTempoAttributesFromIssue(issue);
+        const attributes = buildAttributesArray(attrs);
 
         // Format entries for API
         const formattedEntries = entries.map((entry) => ({
@@ -222,9 +229,7 @@ export async function bulkCreateWorklogs(
           authorAccountId,
           description: entry.description || '',
           ...(entry.startTime && { startTime: `${entry.startTime}:00` }),
-          ...(account && {
-            attributes: [{ key: '_Account_', value: account.key }],
-          }),
+          ...(attributes && { attributes }),
         }));
 
         const { id: issueId } = issue;
@@ -254,7 +259,7 @@ export async function bulkCreateWorklogs(
             success: !!created,
             startTime: entry.startTime,
             endTime,
-            account: account?.name,
+            account: attrs.account?.name,
           });
         });
       } catch (error) {
@@ -434,8 +439,31 @@ export async function deleteWorklog(worklogId: string): Promise<ToolResponse> {
   }
 }
 
+/** Tempo work attributes for a worklog */
+interface TempoAttributes {
+  account?: { key: string; name: string };
+  role?: { key: string; name: string };
+}
+
 /**
- *  @returns The tempo account that is associated with the issue, if any
+ * Fetch Tempo work attributes (Account and Role) from issue custom fields
+ */
+async function fetchTempoAttributesFromIssue({
+  tempoAccountId,
+  tempoRoleId,
+}: {
+  tempoAccountId?: string;
+  tempoRoleId?: string;
+}): Promise<TempoAttributes> {
+  const [account, role] = await Promise.all([
+    tempoAccountId ? retrieveAccount(tempoAccountId) : undefined,
+    tempoRoleId ? retrieveRole(tempoRoleId) : undefined,
+  ]);
+  return { account, role };
+}
+
+/**
+ * @deprecated Use fetchTempoAttributesFromIssue instead
  */
 async function fetchTempoAccountFromIssue({
   tempoAccountId,
@@ -453,4 +481,32 @@ async function retrieveAccount(
 ): Promise<{ key: string; name: string }> {
   const response = await api.get(`/accounts/${id}`);
   return response.data;
+}
+
+/**
+ * Retrieve role details by ID
+ */
+async function retrieveRole(
+  id: string,
+): Promise<{ key: string; name: string }> {
+  const response = await api.get(`/roles/${id}`);
+  return response.data;
+}
+
+/**
+ * Build attributes array for worklog payload
+ */
+function buildAttributesArray(
+  attrs: TempoAttributes,
+): Array<{ key: string; value: string }> | undefined {
+  const attributes: Array<{ key: string; value: string }> = [];
+
+  if (attrs.account) {
+    attributes.push({ key: '_Account_', value: attrs.account.key });
+  }
+  if (attrs.role) {
+    attributes.push({ key: '_Role_', value: attrs.role.key });
+  }
+
+  return attributes.length > 0 ? attributes : undefined;
 }

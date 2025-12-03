@@ -25,6 +25,7 @@ export const envSchema = z
     JIRA_EMAIL: z.string().optional(),
     JIRA_AUTH_TYPE: z.enum(['basic', 'bearer']).optional().default('basic'),
     JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID: z.string().optional(),
+    JIRA_TEMPO_ROLE_CUSTOM_FIELD_ID: z.string().optional(),
   })
   .refine((data) => data.JIRA_AUTH_TYPE === 'bearer' || data.JIRA_EMAIL, {
     message: 'JIRA_EMAIL is required when using basic authentication',
@@ -139,11 +140,17 @@ export interface Config {
      */
     authType: 'basic' | 'bearer';
     /**
-     * The id of the custom Jira field Id which links jira issues to Tempo accounts.
+     * The id of the custom Jira field which links jira issues to Tempo accounts.
      * This must be set if your organization has configured a mandatory tempo custom work attribute of type "Account".
      * Example: "10234"
      */
     tempoAccountCustomFieldId?: string;
+    /**
+     * The id of the custom Jira field which links jira issues to Tempo roles.
+     * This must be set if your organization uses a Role work attribute linked to issues.
+     * Example: "10235"
+     */
+    tempoRoleCustomFieldId?: string;
   };
   server: { name: string; version: string };
 }

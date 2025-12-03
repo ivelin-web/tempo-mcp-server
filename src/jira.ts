@@ -99,6 +99,8 @@ export async function getIssue(idOrKey: string | number): Promise<{
   key: string;
   /** If the issue has a Tempo account associated, this will be the account ID */
   tempoAccountId?: string;
+  /** If the issue has a Tempo role associated, this will be the role ID */
+  tempoRoleId?: string;
 }> {
   try {
     // Validate issue ID using the schema
@@ -110,12 +112,16 @@ export async function getIssue(idOrKey: string | number): Promise<{
     }
 
     const response = await jiraApi.get(`/rest/api/3/issue/${idOrKey}`);
+    const fields = response.data.fields;
 
-    // Find the Tempo account key
+    // Extract Tempo account ID from custom field (if configured)
     const tempoAccountId = config.jiraApi.tempoAccountCustomFieldId
-      ? response.data.fields[
-          `customfield_${config.jiraApi.tempoAccountCustomFieldId}`
-        ].id
+      ? fields[`customfield_${config.jiraApi.tempoAccountCustomFieldId}`]?.id
+      : undefined;
+
+    // Extract Tempo role ID from custom field (if configured)
+    const tempoRoleId = config.jiraApi.tempoRoleCustomFieldId
+      ? fields[`customfield_${config.jiraApi.tempoRoleCustomFieldId}`]?.id
       : undefined;
 
     const id = response.data.id;
@@ -125,6 +131,7 @@ export async function getIssue(idOrKey: string | number): Promise<{
       id,
       key,
       ...(tempoAccountId ? { tempoAccountId } : {}),
+      ...(tempoRoleId ? { tempoRoleId } : {}),
     };
   } catch (error) {
     throw formatJiraError(error, `Failed to get issue for ${idOrKey}`);
