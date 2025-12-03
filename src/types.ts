@@ -17,13 +17,18 @@ export const issueIdSchema = () =>
 export const idOrKeySchema = () => z.union([issueKeySchema(), issueIdSchema()]);
 
 // Environment validation
-export const envSchema = z.object({
-  TEMPO_API_TOKEN: z.string().min(1, 'TEMPO_API_TOKEN is required'),
-  JIRA_BASE_URL: z.string().min(1, 'JIRA_BASE_URL is required'),
-  JIRA_API_TOKEN: z.string().min(1, 'JIRA_API_TOKEN is required'),
-  JIRA_EMAIL: z.string().min(1, 'JIRA_EMAIL is required'),
-  JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID: z.string().optional(),
-});
+export const envSchema = z
+  .object({
+    TEMPO_API_TOKEN: z.string().min(1, 'TEMPO_API_TOKEN is required'),
+    JIRA_BASE_URL: z.string().min(1, 'JIRA_BASE_URL is required'),
+    JIRA_API_TOKEN: z.string().min(1, 'JIRA_API_TOKEN is required'),
+    JIRA_EMAIL: z.string().optional(),
+    JIRA_AUTH_TYPE: z.enum(['basic', 'bearer']).optional().default('basic'),
+    JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID: z.string().optional(),
+  })
+  .refine((data) => data.JIRA_AUTH_TYPE === 'bearer' || data.JIRA_EMAIL, {
+    message: 'JIRA_EMAIL is required when using basic authentication',
+  });
 
 export type Env = z.infer<typeof envSchema>;
 
@@ -126,7 +131,13 @@ export interface Config {
   jiraApi: {
     baseUrl: string;
     token: string;
-    email: string;
+    email?: string;
+    /**
+     * Authentication type for Jira API.
+     * - 'basic': Uses Basic Auth with email:token (default, requires JIRA_EMAIL)
+     * - 'bearer': Uses Bearer token auth (for OAuth 2.0 scoped tokens)
+     */
+    authType: 'basic' | 'bearer';
     /**
      * The id of the custom Jira field Id which links jira issues to Tempo accounts.
      * This must be set if your organization has configured a mandatory tempo custom work attribute of type "Account".

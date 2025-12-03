@@ -137,13 +137,46 @@ The server requires the following environment variables:
 ```
 TEMPO_API_TOKEN     # Your Tempo API token
 JIRA_API_TOKEN      # Your Jira API token
-JIRA_EMAIL          # Your Jira account email
+JIRA_EMAIL          # Your Jira account email (required for basic auth)
 JIRA_BASE_URL       # Your Jira instance URL (e.g., https://your-org.atlassian.net)
+JIRA_AUTH_TYPE      # Optional: 'basic' (default) or 'bearer' for OAuth 2.0 tokens
 JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID     # Optional: Custom field ID for Tempo accounts
-
 ```
 
 You can set these in your environment or provide them in the MCP client configuration.
+
+### Authentication Types
+
+The server supports two authentication methods for the Jira API:
+
+#### Basic Authentication (default)
+
+Uses email and API token. This is the traditional method:
+
+```json
+{
+  "env": {
+    "JIRA_API_TOKEN": "your_api_token",
+    "JIRA_EMAIL": "your_email@example.com",
+    "JIRA_AUTH_TYPE": "basic"
+  }
+}
+```
+
+#### Bearer Token Authentication (OAuth 2.0)
+
+For users who want to use OAuth 2.0 scoped tokens for enhanced security:
+
+```json
+{
+  "env": {
+    "JIRA_API_TOKEN": "your_oauth_access_token",
+    "JIRA_AUTH_TYPE": "bearer"
+  }
+}
+```
+
+Note: When using `bearer` auth, `JIRA_EMAIL` is not required as the user is identified from the token.
 
 ## Tempo Account Configuration
 

@@ -2,11 +2,20 @@ import axios from 'axios';
 import { JiraUser, issueIdSchema, idOrKeySchema } from './types.js';
 import config from './config.js';
 
+// Build authorization header based on auth type
+function getAuthHeader(): string {
+  if (config.jiraApi.authType === 'bearer') {
+    return `Bearer ${config.jiraApi.token}`;
+  }
+  // Basic auth (default)
+  return `Basic ${Buffer.from(`${config.jiraApi.email}:${config.jiraApi.token}`).toString('base64')}`;
+}
+
 // Jira API client with authentication
 const jiraApi = axios.create({
   baseURL: config.jiraApi.baseUrl,
   headers: {
-    Authorization: `Basic ${Buffer.from(`${config.jiraApi.email}:${config.jiraApi.token}`).toString('base64')}`,
+    Authorization: getAuthHeader(),
     Accept: 'application/json',
     'Content-Type': 'application/json',
   },
@@ -26,10 +35,19 @@ function formatJiraError(error: unknown, context: string): Error {
 }
 
 /**
- * Get user's account ID using the configured email
+ * Get user's account ID.
+ * - For Bearer auth: uses /myself endpoint
+ * - For Basic auth: searches by configured email
  */
 export async function getCurrentUserAccountId(): Promise<string> {
   try {
+    if (config.jiraApi.authType === 'bearer') {
+      // Bearer auth: get current user directly
+      const response = await jiraApi.get<JiraUser>('/rest/api/3/myself');
+      return response.data.accountId;
+    }
+
+    // Basic auth: search by email
     const response = await jiraApi.get<JiraUser[]>('/rest/api/3/user/search', {
       params: { query: config.jiraApi.email },
     });
