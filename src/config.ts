@@ -37,6 +37,7 @@ const config: Config = {
     baseUrl: env.JIRA_BASE_URL,
     token: env.JIRA_API_TOKEN,
     email: env.JIRA_EMAIL,
+    authType: env.JIRA_AUTH_TYPE,
     tempoAccountCustomFieldId:
       env.JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID || undefined,
   },
