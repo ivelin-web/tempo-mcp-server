@@ -2,6 +2,7 @@ import axios from 'axios';
 import {
   ToolResponse,
   TempoWorklog,
+  WorkAttribute,
   WorklogResult,
   WorklogError,
   WorklogEntry,
@@ -93,10 +94,14 @@ export async function retrieveWorklogs(
       const timeSpentHours = (worklog.timeSpentSeconds / 3600).toFixed(2);
       const date = worklog.startDate || 'Unknown';
       const startTime = worklog.startTime || '';
+      const attributeValues = worklog.attributes?.values;
+      const attributesInfo = attributeValues?.length
+        ? ` | Attributes: ${JSON.stringify(attributeValues)}`
+        : '';
 
       return {
         type: 'text' as const,
-        text: `TempoWorklogId: ${tempoWorklogId} | IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date}${startTime ? ` | StartTime: ${startTime}` : ''} | Hours: ${timeSpentHours} | Description: ${description}`,
+        text: `TempoWorklogId: ${tempoWorklogId} | IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date}${startTime ? ` | StartTime: ${startTime}` : ''} | Hours: ${timeSpentHours} | Description: ${description}${attributesInfo}`,
       };
     });
 
@@ -131,6 +136,7 @@ export async function createWorklog(
   date: string,
   description: string = '',
   startTime: string | undefined = undefined,
+  attributes?: WorkAttribute[],
 ): Promise<ToolResponse> {
   try {
     // Get issue ID and account ID
@@ -140,6 +146,8 @@ export async function createWorklog(
     const account = await fetchTempoAccountFromIssue(issue);
 
     const { id: issueId } = issue;
+    // Prepare attributes array (auto-detected _Account_ takes precedence)
+    const attributesArray = mergeAttributes(account, attributes);
     // Prepare payload
     const payload = {
       issueId: Number(issueId),
@@ -148,9 +156,7 @@ export async function createWorklog(
       authorAccountId: accountId,
       description,
       ...(startTime && { startTime: `${startTime}:00` }),
-      ...(account && {
-        attributes: [{ key: '_Account_', value: account.key }],
-      }),
+      ...(attributesArray.length > 0 && { attributes: attributesArray }),
     };
 
     // Submit the worklog
@@ -164,12 +170,16 @@ export async function createWorklog(
     }
 
     const accountInfo = account ? ` with account '${account.name}'` : '';
+    const userAttrInfo =
+      attributes && attributes.length > 0
+        ? ` with attributes: ${attributes.map((a) => `${a.key}=${a.value}`).join(', ')}`
+        : '';
 
     return {
       content: [
         {
           type: 'text',
-          text: `Worklog with ID ${response.data.tempoWorklogId} created successfully for ${issueKey}${accountInfo}. Time logged: ${timeSpentHours} hours on ${date}${timeInfo}`,
+          text: `Worklog with ID ${response.data.tempoWorklogId} created successfully for ${issueKey}${accountInfo}${userAttrInfo}. Time logged: ${timeSpentHours} hours on ${date}${timeInfo}`,
         },
       ],
     };
@@ -216,16 +226,17 @@ export async function bulkCreateWorklogs(
         const account = await fetchTempoAccountFromIssue(issue);
 
         // Format entries for API
-        const formattedEntries = entries.map((entry) => ({
-          timeSpentSeconds: Math.round(entry.timeSpentHours * 3600),
-          startDate: entry.date,
-          authorAccountId,
-          description: entry.description || '',
-          ...(entry.startTime && { startTime: `${entry.startTime}:00` }),
-          ...(account && {
-            attributes: [{ key: '_Account_', value: account.key }],
-          }),
-        }));
+        const formattedEntries = entries.map((entry) => {
+          const attributesArray = mergeAttributes(account, entry.attributes);
+          return {
+            timeSpentSeconds: Math.round(entry.timeSpentHours * 3600),
+            startDate: entry.date,
+            authorAccountId,
+            description: entry.description || '',
+            ...(entry.startTime && { startTime: `${entry.startTime}:00` }),
+            ...(attributesArray.length > 0 && { attributes: attributesArray }),
+          };
+        });
 
         const { id: issueId } = issue;
 
@@ -351,6 +362,7 @@ export async function editWorklog(
   description: string | null = null,
   date: string | null = null,
   startTime: string | undefined = undefined,
+  attributes?: WorkAttribute[],
 ): Promise<ToolResponse> {
   try {
     // Get current worklog
@@ -365,6 +377,7 @@ export async function editWorklog(
       billableSeconds: Math.round(timeSpentHours * 3600),
       ...(description !== null && { description }),
       ...(startTime && { startTime: `${startTime}:00` }),
+      ...(attributes && attributes.length > 0 && { attributes }),
     };
 
     // Update the worklog
@@ -453,4 +466,31 @@ async function retrieveAccount(
 ): Promise<{ key: string; name: string }> {
   const response = await api.get(`/accounts/${id}`);
   return response.data;
+}
+
+/**
+ * Merge auto-detected account attribute with user-provided attributes.
+ * Auto-detected keys (_Account_) take precedence over user-provided duplicates.
+ */
+export function mergeAttributes(
+  account: { key: string; name: string } | undefined,
+  userAttributes?: WorkAttribute[],
+): WorkAttribute[] {
+  const attributesArray: WorkAttribute[] = [];
+  const autoKeys = new Set<string>();
+
+  if (account) {
+    attributesArray.push({ key: '_Account_', value: account.key });
+    autoKeys.add('_Account_');
+  }
+
+  if (userAttributes && userAttributes.length > 0) {
+    for (const attr of userAttributes) {
+      if (!autoKeys.has(attr.key)) {
+        attributesArray.push(attr);
+      }
+    }
+  }
+
+  return attributesArray;
 }
