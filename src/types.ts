@@ -104,7 +104,10 @@ export interface TempoWorklog {
   billableSeconds?: number;
   remainingEstimateSeconds?: number;
   startTime?: string;
-  attributes?: Array<any>;
+  attributes?: {
+    self?: string;
+    values: Array<{ key: string; value: string }>;
+  };
 }
 
 // MCP response interfaces

@@ -369,6 +369,15 @@ export async function editWorklog(
     const response = await api.get<TempoWorklog>(`/worklogs/${worklogId}`);
     const worklog = response.data;
 
+    // Extract existing attributes from the worklog and merge with user-provided ones
+    const existingAttributes: WorkAttribute[] = (
+      worklog.attributes?.values || []
+    ).map((attr) => ({ key: attr.key, value: attr.value }));
+    const mergedAttributes = mergeExistingWithUserAttributes(
+      existingAttributes,
+      attributes,
+    );
+
     // Prepare update payload
     const updatePayload = {
       authorAccountId: worklog.author.accountId,
@@ -377,7 +386,7 @@ export async function editWorklog(
       billableSeconds: Math.round(timeSpentHours * 3600),
       ...(description !== null && { description }),
       ...(startTime && { startTime: `${startTime}:00` }),
-      ...(attributes && attributes.length > 0 && { attributes }),
+      ...(mergedAttributes.length > 0 && { attributes: mergedAttributes }),
     };
 
     // Update the worklog
@@ -493,4 +502,27 @@ export function mergeAttributes(
   }
 
   return attributesArray;
+}
+
+/**
+ * Merge existing worklog attributes with user-provided overrides.
+ * Existing attributes are preserved; user-provided attributes override matching keys.
+ */
+function mergeExistingWithUserAttributes(
+  existingAttributes: WorkAttribute[],
+  userAttributes?: WorkAttribute[],
+): WorkAttribute[] {
+  if (!userAttributes || userAttributes.length === 0) {
+    return existingAttributes;
+  }
+
+  const merged = new Map<string, string>();
+  for (const attr of existingAttributes) {
+    merged.set(attr.key, attr.value);
+  }
+  for (const attr of userAttributes) {
+    merged.set(attr.key, attr.value);
+  }
+
+  return Array.from(merged.entries()).map(([key, value]) => ({ key, value }));
 }
