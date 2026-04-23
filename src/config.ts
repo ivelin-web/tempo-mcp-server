@@ -38,6 +38,8 @@ const config: Config = {
     token: env.JIRA_API_TOKEN,
     email: env.JIRA_EMAIL,
     authType: env.JIRA_AUTH_TYPE,
+    oauthClientId: env.JIRA_OAUTH_CLIENT_ID,
+    oauthClientSecret: env.JIRA_OAUTH_CLIENT_SECRET,
     tempoAccountCustomFieldId:
       env.JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID || undefined,
   },

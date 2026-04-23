@@ -1,6 +1,7 @@
-import axios from 'axios';
+import axios, { AxiosInstance } from 'axios';
 import { JiraUser, issueIdSchema, idOrKeySchema } from './types.js';
 import config from './config.js';
+import { getOAuthToken, OAuthConfig } from './oauth.js';
 
 // Build authorization header based on auth type
 function getAuthHeader(): string {
@@ -11,15 +12,43 @@ function getAuthHeader(): string {
   return `Basic ${Buffer.from(`${config.jiraApi.email}:${config.jiraApi.token}`).toString('base64')}`;
 }
 
-// Jira API client with authentication
-const jiraApi = axios.create({
-  baseURL: config.jiraApi.baseUrl,
-  headers: {
-    Authorization: getAuthHeader(),
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-  },
-});
+let _jiraApi: AxiosInstance | null = null;
+
+async function getJiraApi(): Promise<AxiosInstance> {
+  if (config.jiraApi.authType === 'oauth') {
+    const oauthCfg: OAuthConfig = {
+      clientId: config.jiraApi.oauthClientId!,
+      clientSecret: config.jiraApi.oauthClientSecret!,
+      siteUrl: config.jiraApi.baseUrl,
+    };
+    const { token, cloudId } = await getOAuthToken(oauthCfg);
+
+    if (!_jiraApi) {
+      _jiraApi = axios.create({
+        baseURL: `https://api.atlassian.com/ex/jira/${cloudId}`,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+    _jiraApi.defaults.headers.common.Authorization = `Bearer ${token}`;
+    return _jiraApi;
+  }
+
+  // Jira API client with authentication
+  if (!_jiraApi) {
+    _jiraApi = axios.create({
+      baseURL: config.jiraApi.baseUrl,
+      headers: {
+        Authorization: getAuthHeader(),
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+    });
+  }
+  return _jiraApi;
+}
 
 // Standardized error handling for Jira API
 function formatJiraError(error: unknown, context: string): Error {
@@ -41,7 +70,11 @@ function formatJiraError(error: unknown, context: string): Error {
  */
 export async function getCurrentUserAccountId(): Promise<string> {
   try {
-    if (config.jiraApi.authType === 'bearer') {
+    const jiraApi = await getJiraApi();
+    if (
+      config.jiraApi.authType === 'bearer' ||
+      config.jiraApi.authType === 'oauth'
+    ) {
       // Bearer auth: get current user directly
       const response = await jiraApi.get<JiraUser>('/rest/api/3/myself');
       return response.data.accountId;
@@ -84,6 +117,7 @@ export async function getIssueKeyById(
       );
     }
 
+    const jiraApi = await getJiraApi();
     const response = await jiraApi.get(`/rest/api/3/issue/${issueId}`);
     return response.data.key;
   } catch (error) {
@@ -109,6 +143,7 @@ export async function getIssue(idOrKey: string | number): Promise<{
       );
     }
 
+    const jiraApi = await getJiraApi();
     const response = await jiraApi.get(`/rest/api/3/issue/${idOrKey}`);
 
     // Find the Tempo account key
