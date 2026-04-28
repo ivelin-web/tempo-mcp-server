@@ -20,7 +20,7 @@ A Model Context Protocol (MCP) server for managing Tempo worklogs in Jira. This 
 - Node.js 18+ (LTS recommended)
 - Jira Cloud instance
 - Tempo API token
-- Jira API token
+- Jira API token (not required when using OAuth 2.0 PKCE authentication)
 
 ## Usage Options
 
@@ -135,11 +135,13 @@ You can run the server directly with Node by pointing to the built JavaScript fi
 The server requires the following environment variables:
 
 ```
-TEMPO_API_TOKEN     # Your Tempo API token
-JIRA_API_TOKEN      # Your Jira API token
-JIRA_EMAIL          # Your Jira account email (required for basic auth)
-JIRA_BASE_URL       # Your Jira instance URL (e.g., https://your-org.atlassian.net)
-JIRA_AUTH_TYPE      # Optional: 'basic' (default) or 'bearer' for OAuth 2.0 tokens
+TEMPO_API_TOKEN           # Your Tempo API token
+JIRA_API_TOKEN            # Your Jira API token (required for basic and bearer auth)
+JIRA_EMAIL                # Your Jira account email (required for basic auth)
+JIRA_BASE_URL             # Your Jira instance URL (e.g., https://your-org.atlassian.net)
+JIRA_AUTH_TYPE            # Optional: 'basic' (default), 'bearer', or 'oauth'
+JIRA_OAUTH_CLIENT_ID      # OAuth 2.0 client ID (required for oauth auth)
+JIRA_OAUTH_CLIENT_SECRET  # OAuth 2.0 client secret (required for oauth auth)
 JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID     # Optional: Custom field ID for Tempo accounts
 ```
 
@@ -147,7 +149,7 @@ You can set these in your environment or provide them in the MCP client configur
 
 ### Authentication Types
 
-The server supports two authentication methods for the Jira API:
+The server supports three authentication methods for the Jira API:
 
 #### Basic Authentication (default)
 
@@ -177,6 +179,29 @@ For users who want to use OAuth 2.0 scoped tokens for enhanced security:
 ```
 
 Note: When using `bearer` auth, `JIRA_EMAIL` is not required as the user is identified from the token.
+
+#### OAuth 2.0 PKCE Authentication
+
+Some Atlassian organizations restrict API token access via admin policy, which causes basic and bearer authentication to fail. The `oauth` type implements the full OAuth 2.0 authorization code flow with PKCE and works regardless of API token restrictions — tokens are short-lived and refreshed automatically without any manual management.
+
+On first use, a browser window opens for you to authorize access. Tokens are stored locally at `~/.tempo-mcp-server/tokens.json` and refreshed automatically.
+
+1. Create an OAuth 2.0 app in [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/) with the `read:jira-user` and `read:jira-work` scopes and `http://localhost:7788/callback` as the callback URL.
+
+2. Configure the server:
+
+```json
+{
+  "env": {
+    "JIRA_BASE_URL": "https://your-org.atlassian.net",
+    "JIRA_AUTH_TYPE": "oauth",
+    "JIRA_OAUTH_CLIENT_ID": "your_client_id",
+    "JIRA_OAUTH_CLIENT_SECRET": "your_client_secret"
+  }
+}
+```
+
+Note: `JIRA_API_TOKEN` and `JIRA_EMAIL` are not required when using `oauth` auth.
 
 ## Tempo Account Configuration
 
@@ -261,6 +286,7 @@ tempo-mcp-server/
 │   ├── config.ts         # Configuration management
 │   ├── index.ts          # MCP server implementation
 │   ├── jira.ts           # Jira API integration
+│   ├── oauth.ts          # OAuth 2.0 PKCE flow and token management
 │   ├── tools.ts          # Tool implementations
 │   ├── types.ts          # TypeScript types and schemas
 │   └── utils.ts          # Utility functions

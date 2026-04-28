@@ -21,14 +21,35 @@ export const envSchema = z
   .object({
     TEMPO_API_TOKEN: z.string().min(1, 'TEMPO_API_TOKEN is required'),
     JIRA_BASE_URL: z.string().min(1, 'JIRA_BASE_URL is required'),
-    JIRA_API_TOKEN: z.string().min(1, 'JIRA_API_TOKEN is required'),
+    JIRA_API_TOKEN: z.string().optional(),
     JIRA_EMAIL: z.string().optional(),
-    JIRA_AUTH_TYPE: z.enum(['basic', 'bearer']).optional().default('basic'),
+    JIRA_AUTH_TYPE: z
+      .enum(['basic', 'bearer', 'oauth'])
+      .optional()
+      .default('basic'),
+    JIRA_OAUTH_CLIENT_ID: z.string().optional(),
+    JIRA_OAUTH_CLIENT_SECRET: z.string().optional(),
     JIRA_TEMPO_ACCOUNT_CUSTOM_FIELD_ID: z.string().optional(),
   })
-  .refine((data) => data.JIRA_AUTH_TYPE === 'bearer' || data.JIRA_EMAIL, {
-    message: 'JIRA_EMAIL is required when using basic authentication',
-  });
+  .refine((data) => data.JIRA_AUTH_TYPE === 'oauth' || !!data.JIRA_API_TOKEN, {
+    message: 'JIRA_API_TOKEN is required for basic and bearer authentication',
+  })
+  .refine(
+    (data) =>
+      data.JIRA_AUTH_TYPE === 'bearer' ||
+      data.JIRA_AUTH_TYPE === 'oauth' ||
+      !!data.JIRA_EMAIL,
+    { message: 'JIRA_EMAIL is required when using basic authentication' },
+  )
+  .refine(
+    (data) =>
+      data.JIRA_AUTH_TYPE !== 'oauth' ||
+      (!!data.JIRA_OAUTH_CLIENT_ID && !!data.JIRA_OAUTH_CLIENT_SECRET),
+    {
+      message:
+        'JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_CLIENT_SECRET are required for OAuth authentication',
+    },
+  );
 
 export type Env = z.infer<typeof envSchema>;
 
@@ -143,14 +164,17 @@ export interface Config {
   tempoApi: { baseUrl: string; token: string };
   jiraApi: {
     baseUrl: string;
-    token: string;
+    token?: string;
     email?: string;
     /**
      * Authentication type for Jira API.
-     * - 'basic': Uses Basic Auth with email:token (default, requires JIRA_EMAIL)
-     * - 'bearer': Uses Bearer token auth (for OAuth 2.0 scoped tokens)
+     * - 'basic': Uses Basic Auth with email:token (default, requires JIRA_EMAIL + JIRA_API_TOKEN)
+     * - 'bearer': Uses Bearer token auth (requires JIRA_API_TOKEN)
+     * - 'oauth': Uses OAuth 2.0 with PKCE (requires JIRA_OAUTH_CLIENT_ID + JIRA_OAUTH_CLIENT_SECRET)
      */
-    authType: 'basic' | 'bearer';
+    authType: 'basic' | 'bearer' | 'oauth';
+    oauthClientId?: string;
+    oauthClientSecret?: string;
     /**
      * The id of the custom Jira field Id which links jira issues to Tempo accounts.
      * This must be set if your organization has configured a mandatory tempo custom work attribute of type "Account".
