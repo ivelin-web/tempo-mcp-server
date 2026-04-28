@@ -54,7 +54,14 @@ server.tool(
 server.tool(
   'createWorklog',
   createWorklogSchema.shape,
-  async ({ issueKey, timeSpentHours, date, description, startTime }) => {
+  async ({
+    issueKey,
+    timeSpentHours,
+    date,
+    description,
+    startTime,
+    attributes,
+  }) => {
     try {
       const result = await tools.createWorklog(
         issueKey,
@@ -62,6 +69,7 @@ server.tool(
         date,
         description,
         startTime,
+        attributes,
       );
       return {
         content: result.content,
@@ -114,7 +122,14 @@ server.tool(
 server.tool(
   'editWorklog',
   editWorklogSchema.shape,
-  async ({ worklogId, timeSpentHours, description, date, startTime }) => {
+  async ({
+    worklogId,
+    timeSpentHours,
+    description,
+    date,
+    startTime,
+    attributes,
+  }) => {
     try {
       const result = await tools.editWorklog(
         worklogId,
@@ -122,6 +137,7 @@ server.tool(
         description || null,
         date || null,
         startTime || undefined,
+        attributes,
       );
       return {
         content: result.content,

@@ -33,12 +33,20 @@ export const envSchema = z
 export type Env = z.infer<typeof envSchema>;
 
 // Worklog entry schema
+export const workAttributeSchema = z.object({
+  key: z.string().min(1, 'Attribute key cannot be empty'),
+  value: z.string().min(1, 'Attribute value cannot be empty'),
+});
+
+export type WorkAttribute = z.infer<typeof workAttributeSchema>;
+
 export const worklogEntrySchema = z.object({
   issueKey: issueKeySchema(),
   timeSpentHours: z.number().positive('Time spent must be positive'),
   date: dateSchema(),
   description: z.string().optional(),
   startTime: timeSchema().optional(),
+  attributes: z.array(workAttributeSchema).optional(),
 });
 
 export type WorklogEntry = z.infer<typeof worklogEntrySchema>;
@@ -55,6 +63,7 @@ export const createWorklogSchema = z.object({
   date: dateSchema(),
   description: z.string().optional().default(''),
   startTime: timeSchema().optional(),
+  attributes: z.array(workAttributeSchema).optional(),
 });
 
 export const bulkCreateWorklogsSchema = z.object({
@@ -69,6 +78,7 @@ export const editWorklogSchema = z.object({
   description: z.string().optional().nullable(),
   date: dateSchema().optional().nullable(),
   startTime: timeSchema().optional(),
+  attributes: z.array(workAttributeSchema).optional(),
 });
 
 export const deleteWorklogSchema = z.object({
@@ -94,7 +104,10 @@ export interface TempoWorklog {
   billableSeconds?: number;
   remainingEstimateSeconds?: number;
   startTime?: string;
-  attributes?: Array<any>;
+  attributes?: {
+    self?: string;
+    values: Array<{ key: string; value: string }>;
+  };
 }
 
 // MCP response interfaces
