@@ -1,7 +1,15 @@
 import { createServer } from 'http';
 import { createHash, randomBytes } from 'crypto';
 import { exec } from 'child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  statSync,
+  unlinkSync,
+} from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import axios from 'axios';
@@ -16,6 +24,10 @@ const REDIRECT_URI = `http://localhost:${OAUTH_CALLBACK_PORT}/callback`;
 
 const TOKEN_DIR = join(homedir(), '.tempo-mcp-server');
 const TOKEN_FILE = join(TOKEN_DIR, 'tokens.json');
+const LOCK_FILE = join(TOKEN_DIR, 'tokens.lock');
+const LOCK_STALE_MS = 30_000;
+const LOCK_TIMEOUT_MS = 15_000;
+const LOCK_POLL_MS = 100;
 
 const SCOPES = 'read:jira-user read:jira-work offline_access';
 
@@ -47,6 +59,48 @@ function loadStore(): Record<string, StoredTokens> {
 function saveStore(store: Record<string, StoredTokens>): void {
   mkdirSync(TOKEN_DIR, { recursive: true });
   writeFileSync(TOKEN_FILE, JSON.stringify(store, null, 2), { mode: 0o600 });
+}
+
+/**
+ * Acquire a cross-process lock around the refresh path.
+ * Atlassian rotates refresh tokens — if two MCP processes race a refresh,
+ * the loser's old refresh_token gets invalidated and falls back to the
+ * browser-based authorize flow, which is disruptive UX.
+ */
+async function acquireRefreshLock(): Promise<() => void> {
+  mkdirSync(TOKEN_DIR, { recursive: true });
+  const start = Date.now();
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      const fd = openSync(LOCK_FILE, 'wx', 0o600);
+      closeSync(fd);
+      return () => {
+        try {
+          unlinkSync(LOCK_FILE);
+        } catch {
+          /* already gone */
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      try {
+        const age = Date.now() - statSync(LOCK_FILE).mtimeMs;
+        if (age > LOCK_STALE_MS) {
+          unlinkSync(LOCK_FILE);
+          continue;
+        }
+      } catch {
+        /* lock vanished between stat and unlink — retry */
+      }
+      if (Date.now() - start > LOCK_TIMEOUT_MS) {
+        throw new Error(
+          `Could not acquire OAuth refresh lock within ${LOCK_TIMEOUT_MS}ms (held by another process at ${LOCK_FILE})`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, LOCK_POLL_MS));
+    }
+  }
 }
 
 function pkce(): { verifier: string; challenge: string } {
@@ -242,28 +296,46 @@ export async function getOAuthToken(
     }
 
     if (stored.refreshToken) {
+      const release = await acquireRefreshLock();
       try {
-        const { accessToken, refreshToken, expiresIn } = await doRefresh(
-          cfg.clientId,
-          cfg.clientSecret,
-          stored.refreshToken,
-        );
-        const updated: StoredTokens = {
-          accessToken,
-          refreshToken,
-          expiresAt: Date.now() + expiresIn * 1000,
-          cloudId: stored.cloudId,
-        };
-        store[cfg.siteUrl] = updated;
-        saveStore(store);
-        memCache = {
-          token: updated.accessToken,
-          cloudId: updated.cloudId,
-          expiresAt: updated.expiresAt,
-        };
-        return { token: updated.accessToken, cloudId: updated.cloudId };
-      } catch {
-        // Fall through to fresh authorization
+        // Double-check: another process may have refreshed while we waited
+        const reread = loadStore()[cfg.siteUrl];
+        if (reread && reread.expiresAt > Date.now() + BUFFER_MS) {
+          memCache = {
+            token: reread.accessToken,
+            cloudId: reread.cloudId,
+            expiresAt: reread.expiresAt,
+          };
+          return { token: reread.accessToken, cloudId: reread.cloudId };
+        }
+
+        const refreshTokenToUse = reread?.refreshToken ?? stored.refreshToken;
+        try {
+          const { accessToken, refreshToken, expiresIn } = await doRefresh(
+            cfg.clientId,
+            cfg.clientSecret,
+            refreshTokenToUse,
+          );
+          const updated: StoredTokens = {
+            accessToken,
+            refreshToken,
+            expiresAt: Date.now() + expiresIn * 1000,
+            cloudId: stored.cloudId,
+          };
+          const latest = loadStore();
+          latest[cfg.siteUrl] = updated;
+          saveStore(latest);
+          memCache = {
+            token: updated.accessToken,
+            cloudId: updated.cloudId,
+            expiresAt: updated.expiresAt,
+          };
+          return { token: updated.accessToken, cloudId: updated.cloudId };
+        } catch {
+          // Fall through to fresh authorization
+        }
+      } finally {
+        release();
       }
     }
   }
