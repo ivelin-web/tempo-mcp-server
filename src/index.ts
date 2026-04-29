@@ -15,6 +15,8 @@ import {
   bulkCreateWorklogsSchema,
   editWorklogSchema,
   deleteWorklogSchema,
+  getMissingWorklogDaysSchema,
+  getWorklogAnalyticsSchema,
 } from './types.js';
 
 // Create MCP server instance
@@ -32,6 +34,7 @@ server.tool(
       const result = await tools.retrieveWorklogs(startDate, endDate);
       return {
         content: result.content,
+        ...(result.isError && { isError: true }),
       };
     } catch (error) {
       console.error(
@@ -73,6 +76,7 @@ server.tool(
       );
       return {
         content: result.content,
+        ...(result.isError && { isError: true }),
       };
     } catch (error) {
       console.error(
@@ -100,6 +104,7 @@ server.tool(
       const result = await tools.bulkCreateWorklogs(worklogEntries);
       return {
         content: result.content,
+        ...(result.isError && { isError: true }),
       };
     } catch (error) {
       console.error(
@@ -141,6 +146,7 @@ server.tool(
       );
       return {
         content: result.content,
+        ...(result.isError && { isError: true }),
       };
     } catch (error) {
       console.error(
@@ -168,6 +174,7 @@ server.tool(
       const result = await tools.deleteWorklog(worklogId);
       return {
         content: result.content,
+        ...(result.isError && { isError: true }),
       };
     } catch (error) {
       console.error(
@@ -178,6 +185,76 @@ server.tool(
           {
             type: 'text',
             text: `Error deleting worklog: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+// Tool: getMissingWorklogDays - find working days with insufficient logged time
+server.tool(
+  'getMissingWorklogDays',
+  "Find working days in a date range where the user's logged time is below the expected hours from their Tempo user-schedule. Holidays and non-working days are skipped automatically. Returns days with their expected vs logged hours, plus a per-issue breakdown for partially-logged days. Requires the 'Schemes' scope on the Tempo API token (in addition to 'Worklogs').",
+  getMissingWorklogDaysSchema.shape,
+  async ({ startDate, endDate, minHoursPerDay }) => {
+    try {
+      const result = await tools.getMissingWorklogDays(
+        startDate,
+        endDate,
+        minHoursPerDay,
+      );
+      // Preserve isError so date-range / MAX_PAGES / 403 / etc. surface
+      // as proper MCP errors, not successful responses with error text.
+      return {
+        content: result.content,
+        ...(result.isError && { isError: true }),
+      };
+    } catch (error) {
+      console.error(
+        `[ERROR] getMissingWorklogDays failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error getting missing worklog days: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+// Tool: getWorklogAnalytics - aggregate worklogs by issue/account/day/week/month
+server.tool(
+  'getWorklogAnalytics',
+  "Aggregate worklogs in a date range and return hours, worklog count, and percentage per group, sorted by hours descending. groupBy options: 'issue' (default), 'account', 'day', 'week' (ISO 8601), 'month'. Note: 'account' grouping reads the _Account_ work attribute on each worklog — worklogs without an account attribute are bucketed as 'No account', so this grouping is only meaningful if your team uses Tempo accounts.",
+  getWorklogAnalyticsSchema.shape,
+  async ({ startDate, endDate, groupBy }) => {
+    try {
+      const result = await tools.getWorklogAnalytics(
+        startDate,
+        endDate,
+        groupBy,
+      );
+      // Preserve isError so date-range / MAX_PAGES / etc. surface as
+      // proper MCP errors, not successful responses with error text.
+      return {
+        content: result.content,
+        ...(result.isError && { isError: true }),
+      };
+    } catch (error) {
+      console.error(
+        `[ERROR] getWorklogAnalytics failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Error getting worklog analytics: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
         isError: true,

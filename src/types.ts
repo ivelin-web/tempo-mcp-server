@@ -106,6 +106,31 @@ export const deleteWorklogSchema = z.object({
   worklogId: z.string().min(1, 'Worklog ID is required'),
 });
 
+export const getMissingWorklogDaysSchema = z.object({
+  startDate: dateSchema(),
+  endDate: dateSchema(),
+  minHoursPerDay: z
+    .number()
+    .positive('minHoursPerDay must be positive')
+    .optional(),
+});
+
+export const analyticsGroupBySchema = z.enum([
+  'issue',
+  'account',
+  'day',
+  'week',
+  'month',
+]);
+
+export type AnalyticsGroupBy = z.infer<typeof analyticsGroupBySchema>;
+
+export const getWorklogAnalyticsSchema = z.object({
+  startDate: dateSchema(),
+  endDate: dateSchema(),
+  groupBy: analyticsGroupBySchema.optional().default('issue'),
+});
+
 // API interfaces
 export interface JiraUser {
   accountId: string;
@@ -158,6 +183,37 @@ export interface WorklogError {
   timeSpentHours: number;
   date: string;
   error: string;
+}
+
+// Tempo user-schedule API
+export type DayScheduleType =
+  | 'WORKING_DAY'
+  | 'NON_WORKING_DAY'
+  | 'HOLIDAY'
+  | 'HOLIDAY_AND_NON_WORKING_DAY';
+
+export interface DaySchedule {
+  date: string;
+  requiredSeconds: number;
+  type: DayScheduleType;
+  holiday?: { name?: string } | null;
+}
+
+export interface MissingWorklogDay {
+  date: string;
+  type: DayScheduleType;
+  expectedHours: number;
+  loggedHours: number;
+  missingHours: number;
+  holiday?: string;
+  loggedBreakdown?: { issueId: string; hours: number }[];
+}
+
+export interface AnalyticsGroup {
+  key: string;
+  hours: number;
+  worklogCount: number;
+  percentage: number;
 }
 
 export interface Config {
