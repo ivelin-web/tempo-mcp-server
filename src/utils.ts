@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getIssueKeyById } from './jira.js';
+import { getIssueInfoById } from './jira.js';
 
 /**
  * Standard error handling for API errors
@@ -13,39 +13,61 @@ export function formatError(error: unknown): string {
 }
 
 /**
- * Get issue keys for worklogs
- * Maps Jira issue IDs to their corresponding issue keys
+ * Extract unique Jira issue IDs from a list of worklogs.
  */
-export async function getIssueKeysMap(
-  worklogs: any[],
-): Promise<Record<string, string>> {
-  // Extract unique issue IDs
-  const uniqueIssueIds = [
+export function extractWorklogIssueIds(worklogs: any[]): string[] {
+  return [
     ...new Set(
-      worklogs.map((worklog) => worklog.issue?.id).filter((id) => id != null),
+      worklogs
+        .map((w) => w.issue?.id)
+        .filter((id) => id != null)
+        .map(String),
     ),
   ];
+}
 
-  if (uniqueIssueIds.length === 0) return {};
+/**
+ * Resolve Jira issue IDs to { key, summary } in parallel.
+ * Used by tools that group/display worklogs by issue. Failed lookups are
+ * silently dropped — callers fall back to "Issue {id}" / "Unknown issue"
+ * labels so a single deleted issue doesn't break the whole response.
+ */
+export async function getIssueInfoMap(
+  issueIds: (string | number)[],
+): Promise<Record<string, { key: string; summary: string }>> {
+  const unique = [...new Set(issueIds.map(String))];
+  if (unique.length === 0) return {};
 
-  // Create issue ID to key map
-  const issueIdToKeyMap: Record<string, string> = {};
-
-  // Fetch issue keys in parallel
+  const map: Record<string, { key: string; summary: string }> = {};
   await Promise.all(
-    uniqueIssueIds.map(async (issueId) => {
+    unique.map(async (issueId) => {
       try {
-        const issueKey = await getIssueKeyById(issueId);
-        issueIdToKeyMap[issueId] = issueKey;
+        map[issueId] = await getIssueInfoById(issueId);
       } catch (error) {
         console.error(
-          `Could not get key for issue ID ${issueId}: ${(error as Error).message}`,
+          `Could not get info for issue ID ${issueId}: ${(error as Error).message}`,
         );
       }
     }),
   );
 
-  return issueIdToKeyMap;
+  return map;
+}
+
+/**
+ * Format hours, dropping trailing zeros: 7.50 -> "7.5h", 30 -> "30h",
+ * 7.25 -> "7.25h". Caps precision at 2 decimals.
+ */
+export function formatHours(hours: number): string {
+  return `${parseFloat(hours.toFixed(2))}h`;
+}
+
+/**
+ * Format percentage similarly: 50.0 -> "50%", 25.5 -> "25.5%".
+ * Caps precision at 1 decimal.
+ */
+export function formatPercent(percent: number): string {
+  return `${parseFloat(percent.toFixed(1))}%`;
 }
 
 /**

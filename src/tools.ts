@@ -6,10 +6,21 @@ import {
   WorklogResult,
   WorklogError,
   WorklogEntry,
+  DaySchedule,
+  MissingWorklogDay,
+  AnalyticsGroup,
+  AnalyticsGroupBy,
 } from './types.js';
 import config from './config.js';
 import { getCurrentUserAccountId, getIssue } from './jira.js';
-import { formatError, getIssueKeysMap, calculateEndTime } from './utils.js';
+import {
+  formatError,
+  getIssueInfoMap,
+  extractWorklogIssueIds,
+  calculateEndTime,
+  formatHours,
+  formatPercent,
+} from './utils.js';
 
 // API client for Tempo
 const api = axios.create({
@@ -20,6 +31,67 @@ const api = axios.create({
   },
 });
 
+// Tempo's /worklogs endpoints accept up to limit=1000 per page (sibling
+// endpoints cap at 5000; 1000 is the documented safe practical cap). Asking
+// for 1000 means a typical month-long query fits in a single round trip.
+const TEMPO_PAGE_LIMIT = 1000;
+
+// Safety cap on total pages — protects against an infinite loop if Tempo's
+// `metadata.next` ever fails to terminate. At limit=1000 this is 500,000
+// worklogs / 100,000 schedule entries, well beyond any realistic query.
+// Hitting it throws (rather than silently truncating) so callers never get
+// misleadingly partial results.
+const MAX_PAGES = 500;
+
+/**
+ * Fetch all worklogs for the current user across paginated pages.
+ * Shared by retrieveWorklogs, getMissingWorklogDays, getWorklogAnalytics.
+ */
+async function fetchAllWorklogs(
+  startDate: string,
+  endDate: string,
+): Promise<{ worklogs: any[]; pagesProcessed: number }> {
+  const accountId = await getCurrentUserAccountId();
+
+  let allWorklogs: any[] = [];
+  let nextUrl: string | null = null;
+  let isFirstRequest = true;
+  let pageCount = 0;
+
+  do {
+    if (pageCount >= MAX_PAGES) {
+      throw new Error(
+        `Reached maximum page limit (${MAX_PAGES}) while fetching worklogs ` +
+          `for ${startDate}..${endDate}. Results would be incomplete — ` +
+          `narrow the date range and try again.`,
+      );
+    }
+
+    let response;
+    if (isFirstRequest) {
+      response = await api.get(`/worklogs/user/${accountId}`, {
+        params: { from: startDate, to: endDate, limit: TEMPO_PAGE_LIMIT },
+      });
+      isFirstRequest = false;
+    } else {
+      response = await axios.get(nextUrl!, {
+        headers: {
+          Authorization: `Bearer ${config.tempoApi.token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+
+    const pageWorklogs = response.data.results || [];
+    allWorklogs = allWorklogs.concat(pageWorklogs);
+
+    nextUrl = response.data.metadata?.next || null;
+    pageCount++;
+  } while (nextUrl);
+
+  return { worklogs: allWorklogs, pagesProcessed: pageCount };
+}
+
 /**
  * Retrieve worklogs for the configured user within a date range
  */
@@ -28,47 +100,10 @@ export async function retrieveWorklogs(
   endDate: string,
 ): Promise<ToolResponse> {
   try {
-    const accountId = await getCurrentUserAccountId();
-
-    // Fetch all pages of worklogs
-    let allWorklogs: any[] = [];
-    let nextUrl: string | null = null;
-    let isFirstRequest = true;
-    let pageCount = 0;
-    const MAX_PAGES = 500; // Safety limit to prevent infinite loops (25,000 worklogs max)
-
-    do {
-      if (pageCount >= MAX_PAGES) {
-        console.warn(
-          `Reached maximum page limit (${MAX_PAGES}) while fetching worklogs`,
-        );
-        break;
-      }
-
-      let response;
-      if (isFirstRequest) {
-        response = await api.get(`/worklogs/user/${accountId}`, {
-          params: { from: startDate, to: endDate },
-        });
-        isFirstRequest = false;
-      } else {
-        response = await axios.get(nextUrl!, {
-          headers: {
-            Authorization: `Bearer ${config.tempoApi.token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-      }
-
-      const pageWorklogs = response.data.results || [];
-      allWorklogs = allWorklogs.concat(pageWorklogs);
-
-      // Check if there's a next page
-      nextUrl = response.data.metadata?.next || null;
-      pageCount++;
-    } while (nextUrl);
-
-    const worklogs = allWorklogs;
+    const { worklogs, pagesProcessed } = await fetchAllWorklogs(
+      startDate,
+      endDate,
+    );
 
     // If no worklogs found, return empty content
     if (worklogs.length === 0) {
@@ -83,13 +118,15 @@ export async function retrieveWorklogs(
     }
 
     // Get issue keys for all worklogs
-    const issueIdToKeyMap = await getIssueKeysMap(worklogs);
+    const issueInfoMap = await getIssueInfoMap(
+      extractWorklogIssueIds(worklogs),
+    );
 
     // Format the response
     const formattedContent = worklogs.map((worklog: any) => {
       const tempoWorklogId = worklog.tempoWorklogId || 'Unknown';
       const issueId = worklog.issue?.id || 'Unknown';
-      const issueKey = issueIdToKeyMap[issueId] || 'Unknown';
+      const issueKey = issueInfoMap[issueId]?.key || 'Unknown';
       const description = worklog.description || 'No description';
       const timeSpentHours = (worklog.timeSpentSeconds / 3600).toFixed(2);
       const date = worklog.startDate || 'Unknown';
@@ -109,7 +146,7 @@ export async function retrieveWorklogs(
       content: formattedContent,
       metadata: {
         totalCount: worklogs.length,
-        pagesProcessed: pageCount,
+        pagesProcessed,
         startDate,
         endDate,
       },
@@ -525,4 +562,420 @@ function mergeExistingWithUserAttributes(
   }
 
   return Array.from(merged.entries()).map(([key, value]) => ({ key, value }));
+}
+
+/**
+ * Fetch the user-schedule from Tempo for a date range.
+ * Returns daily expected hours, working/non-working/holiday classification.
+ * Handles both paginated wrapper and direct array responses.
+ *
+ * Requires the Tempo API token to include the "Schemes" scope (covers
+ * Workload Schemes, Holiday Schemes, User Schedule). 403 is rewritten to
+ * a clear scope-guidance message.
+ */
+async function fetchUserSchedule(
+  accountId: string,
+  startDate: string,
+  endDate: string,
+): Promise<DaySchedule[]> {
+  let allDays: DaySchedule[] = [];
+  let nextUrl: string | null = null;
+  let isFirstRequest = true;
+  let pageCount = 0;
+
+  try {
+    do {
+      if (pageCount >= MAX_PAGES) {
+        throw new Error(
+          `Reached maximum page limit (${MAX_PAGES}) while fetching user ` +
+            `schedule for ${startDate}..${endDate}. Results would be ` +
+            `incomplete — narrow the date range and try again.`,
+        );
+      }
+
+      let response;
+      if (isFirstRequest) {
+        response = await api.get(`/user-schedule/${accountId}`, {
+          params: { from: startDate, to: endDate, limit: TEMPO_PAGE_LIMIT },
+        });
+        isFirstRequest = false;
+      } else {
+        response = await axios.get(nextUrl!, {
+          headers: {
+            Authorization: `Bearer ${config.tempoApi.token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+
+      const days: DaySchedule[] = Array.isArray(response.data)
+        ? response.data
+        : response.data.results || [];
+      allDays = allDays.concat(days);
+
+      nextUrl = Array.isArray(response.data)
+        ? null
+        : response.data.metadata?.next || null;
+      pageCount++;
+    } while (nextUrl);
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 403) {
+      throw new Error(
+        'Tempo API returned 403 for /user-schedule. Your TEMPO_API_TOKEN ' +
+          'is missing the "Schemes" scope (which covers Workload Schemes, ' +
+          'Holiday Schemes, and User Schedule). Tempo does not allow ' +
+          'modifying scopes on an existing token — create a new token at ' +
+          'Tempo > Settings > API Integration with both "Worklogs" and ' +
+          '"Schemes" scopes, then update TEMPO_API_TOKEN.',
+      );
+    }
+    throw error;
+  }
+
+  return allDays;
+}
+
+/**
+ * Reject inverted date ranges with a clear MCP error response.
+ * Returns null when the range is valid, or a ToolResponse to short-circuit.
+ * Lexicographic comparison is sound for YYYY-MM-DD strings.
+ */
+function validateDateRange(
+  startDate: string,
+  endDate: string,
+): ToolResponse | null {
+  if (startDate > endDate) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: `Invalid range: startDate (${startDate}) must be on or before endDate (${endDate}).`,
+        },
+      ],
+    };
+  }
+  return null;
+}
+
+/**
+ * Find working days in a range where the user has logged less time than
+ * Tempo expects (per user-schedule). Honours holidays / non-working days
+ * automatically. minHoursPerDay overrides the per-day expected hours but
+ * still skips non-working days.
+ */
+export async function getMissingWorklogDays(
+  startDate: string,
+  endDate: string,
+  minHoursPerDay?: number,
+): Promise<ToolResponse> {
+  const rangeError = validateDateRange(startDate, endDate);
+  if (rangeError) return rangeError;
+
+  try {
+    const accountId = await getCurrentUserAccountId();
+
+    const [schedule, { worklogs }] = await Promise.all([
+      fetchUserSchedule(accountId, startDate, endDate),
+      fetchAllWorklogs(startDate, endDate),
+    ]);
+
+    if (schedule.length === 0) {
+      // Empty schedule is a legitimate state — user has no workload scheme
+      // configured for this period. Not an error, just nothing to report.
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `No user-schedule entries returned by Tempo for ${startDate} to ${endDate}. The user may not have a workload scheme configured for this period.`,
+          },
+        ],
+        metadata: {
+          totalMissingDays: 0,
+          totalMissingHours: 0,
+          startDate,
+          endDate,
+        },
+      };
+    }
+
+    // Group worklogs by date, then by issue ID, summing seconds.
+    // Used to (a) compute total logged per day and (b) show per-day
+    // breakdown of what was actually logged on partially-missing days.
+    const loggedByDate = new Map<string, Map<string, number>>();
+    for (const w of worklogs) {
+      const date = w.startDate;
+      if (!date) continue;
+      const issueId = w.issue?.id ? String(w.issue.id) : 'unknown';
+      const issueMap = loggedByDate.get(date) ?? new Map<string, number>();
+      issueMap.set(
+        issueId,
+        (issueMap.get(issueId) ?? 0) + Number(w.timeSpentSeconds ?? 0),
+      );
+      loggedByDate.set(date, issueMap);
+    }
+
+    const overrideSeconds =
+      minHoursPerDay !== undefined ? Math.round(minHoursPerDay * 3600) : null;
+
+    const missing: MissingWorklogDay[] = [];
+    for (const day of schedule) {
+      // Skip days Tempo classifies as non-working, regardless of override
+      if (day.requiredSeconds <= 0) continue;
+
+      const requiredSeconds = overrideSeconds ?? day.requiredSeconds;
+      const dayIssues = loggedByDate.get(day.date);
+      const loggedSeconds = dayIssues
+        ? Array.from(dayIssues.values()).reduce((s, v) => s + v, 0)
+        : 0;
+      if (loggedSeconds >= requiredSeconds) continue;
+
+      const breakdown = dayIssues
+        ? Array.from(dayIssues.entries()).map(([issueId, seconds]) => ({
+            issueId,
+            hours: seconds / 3600,
+          }))
+        : [];
+
+      missing.push({
+        date: day.date,
+        type: day.type,
+        expectedHours: requiredSeconds / 3600,
+        loggedHours: loggedSeconds / 3600,
+        missingHours: (requiredSeconds - loggedSeconds) / 3600,
+        ...(day.holiday?.name ? { holiday: day.holiday.name } : {}),
+        ...(breakdown.length > 0 ? { loggedBreakdown: breakdown } : {}),
+      });
+    }
+
+    // Resolve issue keys + summaries for everything that appears in
+    // partial-day breakdowns (skipped if no partial days).
+    const partialIssueIds = new Set<string>();
+    for (const m of missing) {
+      for (const b of m.loggedBreakdown ?? []) {
+        if (b.issueId !== 'unknown') partialIssueIds.add(b.issueId);
+      }
+    }
+    const issueInfoMap =
+      partialIssueIds.size > 0
+        ? await getIssueInfoMap(Array.from(partialIssueIds))
+        : {};
+
+    if (missing.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `All working days between ${startDate} and ${endDate} meet the expected hours.`,
+          },
+        ],
+        metadata: {
+          totalMissingDays: 0,
+          totalMissingHours: 0,
+          startDate,
+          endDate,
+        },
+      };
+    }
+
+    const totalMissingHours = missing.reduce(
+      (sum, d) => sum + d.missingHours,
+      0,
+    );
+
+    const dayWord = missing.length === 1 ? 'day' : 'days';
+    const lines: string[] = [
+      `Found ${missing.length} ${dayWord} with missing worklogs · ${startDate} to ${endDate}`,
+      `Total missing: ${formatHours(totalMissingHours)}`,
+      '',
+    ];
+    for (const d of missing) {
+      const typeBadge = d.type === 'WORKING_DAY' ? '' : ` [${d.type}]`;
+      const holidayBadge = d.holiday ? ` (${d.holiday})` : '';
+      lines.push(
+        `${d.date}${typeBadge}${holidayBadge} — missing ${formatHours(d.missingHours)} (${formatHours(d.loggedHours)} of ${formatHours(d.expectedHours)} logged)`,
+      );
+      for (const b of d.loggedBreakdown ?? []) {
+        const info = issueInfoMap[b.issueId];
+        const label = info
+          ? info.summary
+            ? `${info.key} — ${info.summary}`
+            : info.key
+          : b.issueId === 'unknown'
+            ? 'Unknown issue'
+            : `Issue ${b.issueId}`;
+        lines.push(`    ${label}: ${formatHours(b.hours)}`);
+      }
+    }
+
+    return {
+      content: [{ type: 'text', text: lines.join('\n') }],
+      metadata: {
+        totalMissingDays: missing.length,
+        totalMissingHours,
+        startDate,
+        endDate,
+        details: missing,
+      },
+    };
+  } catch (error) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: `Failed to get missing worklog days: ${formatError(error)}`,
+        },
+      ],
+    };
+  }
+}
+
+/**
+ * Aggregate worklogs in a date range by issue / account / day / week / month.
+ * Returns hours, count, and percentage per group, sorted by hours desc.
+ */
+export async function getWorklogAnalytics(
+  startDate: string,
+  endDate: string,
+  groupBy: AnalyticsGroupBy = 'issue',
+): Promise<ToolResponse> {
+  const rangeError = validateDateRange(startDate, endDate);
+  if (rangeError) return rangeError;
+
+  try {
+    const { worklogs } = await fetchAllWorklogs(startDate, endDate);
+
+    if (worklogs.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `No worklogs found between ${startDate} and ${endDate}.`,
+          },
+        ],
+        metadata: {
+          totalHours: 0,
+          totalWorklogs: 0,
+          groupBy,
+          startDate,
+          endDate,
+        },
+      };
+    }
+
+    let issueInfoMap: Record<string, { key: string; summary: string }> = {};
+    if (groupBy === 'issue') {
+      issueInfoMap = await getIssueInfoMap(extractWorklogIssueIds(worklogs));
+    }
+
+    const buckets = new Map<string, { seconds: number; count: number }>();
+    for (const w of worklogs) {
+      const key = computeGroupKey(w, groupBy, issueInfoMap);
+      const bucket = buckets.get(key) ?? { seconds: 0, count: 0 };
+      bucket.seconds += Number(w.timeSpentSeconds ?? 0);
+      bucket.count += 1;
+      buckets.set(key, bucket);
+    }
+
+    const totalSeconds = Array.from(buckets.values()).reduce(
+      (s, b) => s + b.seconds,
+      0,
+    );
+    const totalHours = totalSeconds / 3600;
+
+    const groups: AnalyticsGroup[] = Array.from(buckets.entries())
+      .map(([key, b]) => ({
+        key,
+        hours: b.seconds / 3600,
+        worklogCount: b.count,
+        percentage: totalSeconds > 0 ? (b.seconds / totalSeconds) * 100 : 0,
+      }))
+      .sort((a, b) => b.hours - a.hours);
+
+    const worklogWord = worklogs.length === 1 ? 'worklog' : 'worklogs';
+    const groupWord = groups.length === 1 ? 'group' : 'groups';
+    const lines: string[] = [
+      `Worklog analytics · ${startDate} to ${endDate} · grouped by ${groupBy}`,
+      `Total: ${formatHours(totalHours)} across ${worklogs.length} ${worklogWord} in ${groups.length} ${groupWord}`,
+      '',
+    ];
+    for (const g of groups) {
+      const wlWord = g.worklogCount === 1 ? 'worklog' : 'worklogs';
+      const stats = `${formatHours(g.hours)} · ${formatPercent(g.percentage)} · ${g.worklogCount} ${wlWord}`;
+      if (groupBy === 'issue') {
+        // Two-line: key + summary on one, stats indented below
+        lines.push(g.key);
+        lines.push(`    ${stats}`);
+      } else {
+        // Single-line for date/account groups (no separate label)
+        lines.push(`${g.key} · ${stats}`);
+      }
+    }
+
+    return {
+      content: [{ type: 'text', text: lines.join('\n') }],
+      metadata: {
+        totalHours,
+        totalWorklogs: worklogs.length,
+        groupCount: groups.length,
+        groupBy,
+        startDate,
+        endDate,
+        details: groups,
+      },
+    };
+  } catch (error) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: `Failed to get worklog analytics: ${formatError(error)}`,
+        },
+      ],
+    };
+  }
+}
+
+function computeGroupKey(
+  worklog: any,
+  groupBy: AnalyticsGroupBy,
+  issueInfoMap: Record<string, { key: string; summary: string }>,
+): string {
+  switch (groupBy) {
+    case 'issue': {
+      const issueId = worklog.issue?.id;
+      if (!issueId) return 'Unknown issue';
+      const info = issueInfoMap[issueId];
+      if (!info) return `Issue ${issueId}`;
+      return info.summary ? `${info.key} — ${info.summary}` : info.key;
+    }
+    case 'account': {
+      const accountAttr = worklog.attributes?.values?.find(
+        (a: { key: string }) => a.key === '_Account_',
+      );
+      return accountAttr?.value || 'No account';
+    }
+    case 'day':
+      return worklog.startDate || 'Unknown date';
+    case 'week':
+      return worklog.startDate ? toIsoWeek(worklog.startDate) : 'Unknown week';
+    case 'month':
+      return worklog.startDate
+        ? worklog.startDate.slice(0, 7)
+        : 'Unknown month';
+  }
+}
+
+// ISO 8601 week date: YYYY-Www
+function toIsoWeek(dateStr: string): string {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil(
+    ((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7,
+  );
+  return `${date.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
 }

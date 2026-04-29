@@ -14,6 +14,8 @@ A Model Context Protocol (MCP) server for managing Tempo worklogs in Jira. This 
 - **Bulk Create**: Create multiple worklogs in a single operation
 - **Edit Worklog**: Modify time spent, dates, and descriptions
 - **Delete Worklog**: Remove existing worklogs
+- **Missing Days Report**: Find working days where you logged less than expected (uses Tempo's user-schedule, so holidays and non-working days are skipped automatically)
+- **Worklog Analytics**: Aggregate hours by issue, account, day, week, or month with totals and percentages
 
 ## System Requirements
 
@@ -124,11 +126,16 @@ You can run the server directly with Node by pointing to the built JavaScript fi
 1. **Tempo API Token**:
 
    - Go to Tempo > Settings > API Integration
-   - Create a new API token with appropriate permissions
+   - Create a new API token with **Custom access** and select at minimum:
+     - **Worklogs** (View + Manage) — for all worklog tools
+     - **Schemes** (View) — required for `getMissingWorklogDays` (reads the user-schedule)
+     - **Accounts** (View) — only if your worklogs use Tempo accounts
+   - Tempo does not allow editing scopes on an existing token; create a new one if you need to add scopes later.
 
 2. **Jira API Token**:
    - Go to [Atlassian API tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
-   - Create a new API token for your account
+   - Click **"Create API token"** (the classic, unscoped flow). This is what works with `basic` auth out of the box.
+   - **Do not use "Create API token with scopes"** — those tokens must be sent through Atlassian's gateway URL (`https://api.atlassian.com/ex/jira/{cloudId}/...`) with the cloud ID, which this server's `basic` auth path does not currently route to. They will fail with 401 against your site URL. If you only have a scoped token available (e.g. your org disabled classic tokens), use the [OAuth 2.0 PKCE flow](#oauth-20-pkce-authentication) instead — it routes through the gateway automatically.
 
 ## Environment Variables
 
@@ -276,6 +283,31 @@ Removes an existing worklog.
 ```
 Parameters:
 - worklogId: String
+```
+
+### getMissingWorklogDays
+
+Reports working days in a date range where the user has logged less time than expected. Expected hours per day come from the user's Tempo schedule, so holidays, non-working days, and part-time schedules are honoured automatically.
+
+```
+Parameters:
+- startDate: String (YYYY-MM-DD)
+- endDate: String (YYYY-MM-DD)
+- minHoursPerDay: Number (optional) — override the per-day threshold;
+                                      non-working days are still skipped
+```
+
+> **Required Tempo scope:** the `TEMPO_API_TOKEN` must include the **Schemes** scope (covers Workload Schemes, Holiday Schemes, User Schedule) in addition to **Worklogs**. Tempo does not allow modifying scopes on an existing token — if your current token only has Worklogs, create a new one at Tempo > Settings > API Integration.
+
+### getWorklogAnalytics
+
+Aggregates worklogs in a date range and returns hours, worklog count, and percentage per group, sorted by hours descending.
+
+```
+Parameters:
+- startDate: String (YYYY-MM-DD)
+- endDate: String (YYYY-MM-DD)
+- groupBy: "issue" | "account" | "day" | "week" | "month" (optional, default "issue")
 ```
 
 ## Project Structure

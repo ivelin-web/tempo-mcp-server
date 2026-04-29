@@ -65,51 +65,52 @@ function formatJiraError(error: unknown, context: string): Error {
 
 /**
  * Get user's account ID.
- * - For Bearer auth: uses /myself endpoint
- * - For Basic auth: searches by configured email
+ *
+ * Uses /myself for all auth types — it returns the authenticated user's own
+ * accountId regardless of basic / bearer / oauth, and avoids the email-based
+ * /user/search which can return empty results when email visibility is
+ * restricted by Atlassian privacy settings or scoped API token limits.
+ *
+ * Falls back to email search for basic auth if /myself fails, to preserve
+ * backwards compatibility with edge cases where /myself is unavailable.
  */
 export async function getCurrentUserAccountId(): Promise<string> {
+  const jiraApi = await getJiraApi();
+
   try {
-    const jiraApi = await getJiraApi();
-    if (
-      config.jiraApi.authType === 'bearer' ||
-      config.jiraApi.authType === 'oauth'
-    ) {
-      // Bearer auth: get current user directly
-      const response = await jiraApi.get<JiraUser>('/rest/api/3/myself');
-      return response.data.accountId;
+    const response = await jiraApi.get<JiraUser>('/rest/api/3/myself');
+    return response.data.accountId;
+  } catch (myselfError) {
+    // For basic auth, try the legacy email-search fallback
+    if (config.jiraApi.authType === 'basic' && config.jiraApi.email) {
+      try {
+        const response = await jiraApi.get<JiraUser[]>(
+          '/rest/api/3/user/search',
+          { params: { query: config.jiraApi.email } },
+        );
+        const users = response.data;
+        const user = users?.find(
+          (u) => u.emailAddress === config.jiraApi.email,
+        );
+        if (user) return user.accountId;
+        throw new Error(`No user found with email: ${config.jiraApi.email}`);
+      } catch (searchError) {
+        throw formatJiraError(searchError, 'Failed to get user account ID');
+      }
     }
-
-    // Basic auth: search by email
-    const response = await jiraApi.get<JiraUser[]>('/rest/api/3/user/search', {
-      params: { query: config.jiraApi.email },
-    });
-
-    const users = response.data;
-    if (!users || users.length === 0) {
-      throw new Error(`No user found with email: ${config.jiraApi.email}`);
-    }
-
-    // Find exact email match
-    const user = users.find((u) => u.emailAddress === config.jiraApi.email);
-    if (!user) {
-      throw new Error(`No exact match for email: ${config.jiraApi.email}`);
-    }
-
-    return user.accountId;
-  } catch (error) {
-    throw formatJiraError(error, 'Failed to get user account ID');
+    throw formatJiraError(myselfError, 'Failed to get user account ID');
   }
 }
 
 /**
- * Get Jira issue key from issue ID
+ * Get Jira issue key + summary by ID.
+ * Used by tools that need to render human-friendly issue labels like
+ * "PPSG-50 — [AI/Backend] Structural AI Generation of Localized".
  */
-export async function getIssueKeyById(
+export async function getIssueInfoById(
   issueId: string | number,
-): Promise<string> {
+): Promise<{ key: string; summary: string }> {
   try {
-    // Validate issue ID using the schema
     const result = issueIdSchema().safeParse(issueId);
     if (!result.success) {
       throw new Error(
@@ -119,9 +120,12 @@ export async function getIssueKeyById(
 
     const jiraApi = await getJiraApi();
     const response = await jiraApi.get(`/rest/api/3/issue/${issueId}`);
-    return response.data.key;
+    return {
+      key: response.data.key,
+      summary: response.data.fields?.summary || '',
+    };
   } catch (error) {
-    throw formatJiraError(error, `Failed to get issue key for ID ${issueId}`);
+    throw formatJiraError(error, `Failed to get issue info for ID ${issueId}`);
   }
 }
 
