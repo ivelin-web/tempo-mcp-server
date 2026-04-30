@@ -19,19 +19,134 @@ A Model Context Protocol (MCP) server for managing Tempo worklogs in Jira. This 
 
 ## System Requirements
 
-- Node.js 18+ (LTS recommended)
+- Node.js 18+ (LTS recommended) — only needed for the local stdio modes
 - Jira Cloud instance
 - Tempo API token
 - Jira API token (not required when using OAuth 2.0 PKCE authentication)
 
 ## Usage Options
 
-There are two main ways to use this MCP server:
+There are three ways to use this MCP server:
 
-1. **NPX (Recommended for most users)**: Run directly without installation
-2. **Local Clone**: Clone the repository for development or customization
+1. **Remote / Cloudflare Workers (no install)** — host once, share with your team. Each user generates their own URL via a setup page and pastes it into Claude.ai or ChatGPT. Works from web and mobile.
+2. **NPX**: Run directly with `npx` on your laptop, no clone required.
+3. **Local Clone**: Clone the repository for development or customization.
 
-## Option 1: NPX Usage
+If you just want to use the server, option 1 is the easiest and works on phones too. If you're a maintainer deploying for your team, see the [Remote deployment guide](#remote-deployment-cloudflare-workers).
+
+## Option 1: Remote (Cloudflare Workers)
+
+### For end users
+
+Once your team has the server deployed, the flow is:
+
+1. Open `https://<your-deployment>.workers.dev/setup`.
+2. Paste your Tempo API token, Jira base URL, Jira API token, and Jira email. Hit **Generate MCP URL**.
+3. The page returns a personal URL like `https://<your-deployment>.workers.dev/mcp/u_<random>`. Copy it.
+4. In **Claude.ai → Settings → Connectors → Add custom connector**, paste the URL.
+5. The connector syncs across web, desktop, and mobile (iOS/Android).
+
+For ChatGPT: enable Settings → Apps → Advanced → **Developer mode** (Pro/Plus/Business+), then add the URL as a custom MCP server. Plus/Pro accounts can read; write tools (create/edit worklogs) require Business+ per OpenAI's tier.
+
+The URL contains your credentials — treat it like a password, don't share or commit it.
+
+### Remote deployment (Cloudflare Workers)
+
+Free-tier hosting on Cloudflare Workers. ~5–10 minutes from clone to live URL. Anyone can fork and self-host — no upstream coordination needed.
+
+#### Prerequisites
+
+- A Cloudflare account (free plan is enough).
+- Node.js 18+ and `npm` locally — only used for `wrangler` CLI; the Worker runtime itself doesn't run Node.
+
+#### One-time setup
+
+```bash
+git clone https://github.com/ivelin-web/tempo-mcp-server.git
+cd tempo-mcp-server
+npm install
+
+# 1. Log in to Cloudflare (opens browser).
+npx wrangler login
+
+# 2. Create your own KV namespace for per-user credentials.
+npx wrangler kv namespace create USERS
+```
+
+> ⚠️ **Important:** copy the `id` returned by step 2 and paste it into [`wrangler.jsonc`](wrangler.jsonc) → `kv_namespaces[0].id`. The committed value is intentionally empty — `wrangler deploy` will fail with `KV namespace … is not valid` until you fill it in. KV namespace ids are per-account and aren't sensitive, but each fork needs its own.
+>
+> If you want to keep your local id out of `git diff` after editing, run once: `git update-index --skip-worktree wrangler.jsonc`. Reverse with `--no-skip-worktree` when you need to commit other config changes.
+
+```bash
+# 3. Generate and store the encryption key.
+#    Used to AES-GCM-encrypt per-user credentials in KV.
+openssl rand -base64 48 | npx wrangler secret put ENCRYPTION_KEY
+
+# 4. (Optional) Pin the CORS origin. Defaults to "*". Set it if you only
+#    want browsers from a specific app to call the Worker.
+echo "https://claude.ai" | npx wrangler secret put ALLOWED_ORIGIN
+
+# 5. Deploy.
+npm run remote:deploy
+# → outputs https://tempo-mcp-server.<your-account>.workers.dev
+```
+
+Visit `/setup` on the deployed URL to onboard your first user.
+
+#### Updating an existing deployment
+
+After pulling new commits from upstream:
+
+```bash
+npm install              # picks up any new deps
+npm run remote:deploy    # ships the new Worker bundle
+```
+
+Secrets and KV data persist across deploys. `compatibility_date` and `compatibility_flags` in `wrangler.jsonc` are pinned, so behaviour doesn't drift silently when Cloudflare ships runtime changes.
+
+#### Local development
+
+```bash
+cp .dev.vars.example .dev.vars
+# edit .dev.vars and put a real ENCRYPTION_KEY (any value works locally)
+npm run remote:dev
+# → http://localhost:8787 with a mock KV; data is wiped between sessions
+```
+
+Other useful scripts:
+
+- `npm run remote:typecheck` — type-check the Worker bundle (uses `tsconfig.worker.json`).
+- `npm run remote:tail` — stream live logs from the deployed Worker.
+
+#### Troubleshooting
+
+- **`KV namespace … is not valid`** — `kv_namespaces[0].id` in `wrangler.jsonc` is empty (or wrong). Run `npx wrangler kv namespace create USERS` and paste the new id.
+- **`ENCRYPTION_KEY is not defined`** at runtime — secret wasn't set. Re-run step 3.
+- **`Rate limit binding … not available`** — your account's plan doesn't include the Workers Rate Limiting API. Either upgrade, or remove the `ratelimits` block in `wrangler.jsonc` and the `SETUP_RATE_LIMITER.limit(...)` call in `src/remote/worker.ts`.
+- **404 from `/mcp/u_…`** — the user id is unknown (or never existed). The Worker returns 404 by design for invalid/missing ids; have the user re-run `/setup`.
+- **Existing users suddenly can't connect** — most likely cause is a rotated `ENCRYPTION_KEY`; existing AES-GCM blobs can't be decrypted with the new key. See the warning below.
+
+#### How it works
+
+**Credential storage:** the `/setup` POST handler AES-GCM encrypts the form data with `ENCRYPTION_KEY` and stores it in KV under `user:u_<random>`. Each MCP request reads + decrypts that record, builds an `McpServer` for that single request, and dispatches via Cloudflare's official `createMcpHandler`. No credentials are held in memory between requests; no Durable Objects are used.
+
+> **Treat `ENCRYPTION_KEY` as long-lived.** Rotating it invalidates every existing user record (the AES-GCM tag won't validate against the new key), and all your users will need to re-run `/setup`. Pick a key from `openssl rand -base64 48` once and never change it.
+
+**Auth model:** the URL `/mcp/u_<id>` _is_ the credential. The 22-char base64url id carries ~128 bits of entropy. We never return 401 for that path (Claude.ai web has known bugs around the 401-then-OAuth flow), and we return 404 for unknown ids. This matches the URL-token pattern used by Zapier MCP, Pipedream MCP, and similar.
+
+**Hardening already in place:**
+
+- Per-IP rate limit (5 req/min) on `POST /setup`, via Cloudflare's native Rate Limiting binding.
+- `Cache-Control: no-store` on `/setup` responses so the success page (which contains the MCP URL) and the error re-render (which echoes tokens back) never sit in any cache.
+- `Referrer-Policy: no-referrer` on every HTML page so the MCP URL doesn't leak via referrer headers.
+
+**Limits to know about:**
+
+- Workers free plan: 100k requests/day, 50ms CPU per request (we are I/O-bound, comfortable).
+- KV free plan: 100k reads/day, 1k writes/day. Setup writes once per user; reads happen per MCP call.
+- The Worker only supports Jira **basic** auth (classic API token + email). Bearer and the OAuth 2.0 PKCE flow are stdio-only — bearer requires gateway URL routing that the Worker does not yet do, and PKCE needs a browser callback the Worker can't host.
+
+## Option 2: NPX Usage
 
 The easiest way to use this server is via npx without installation:
 
@@ -67,7 +182,7 @@ The easiest way to use this server is via npx without installation:
 
 [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/install-mcp?name=Jira%20Tempo&config=eyJjb21tYW5kIjoibnB4IC15IEBpdmVsaW4td2ViL3RlbXBvLW1jcC1zZXJ2ZXIiLCJlbnYiOnsiVEVNUE9fQVBJX1RPS0VOIjoieW91cl90ZW1wb19hcGlfdG9rZW5faGVyZSIsIkpJUkFfQVBJX1RPS0VOIjoieW91cl9qaXJhX2FwaV90b2tlbl9oZXJlIiwiSklSQV9FTUFJTCI6InlvdXJfZW1haWxAZXhhbXBsZS5jb20iLCJKSVJBX0JBU0VfVVJMIjoiaHR0cHM6Ly95b3VyLW9yZy5hdGxhc3NpYW4ubmV0In19)
 
-## Option 2: Local Repository Clone
+## Option 3: Local Repository Clone
 
 ### Installation
 

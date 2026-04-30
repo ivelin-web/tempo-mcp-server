@@ -134,7 +134,7 @@ export const getWorklogAnalyticsSchema = z.object({
 // API interfaces
 export interface JiraUser {
   accountId: string;
-  emailAddress: string;
+  emailAddress?: string;
   displayName?: string;
 }
 
@@ -239,4 +239,37 @@ export interface Config {
     tempoAccountCustomFieldId?: string;
   };
   server: { name: string; version: string };
+}
+
+/**
+ * Per-request context that drives Tempo + Jira API calls.
+ *
+ * Both transports (stdio and the Cloudflare Worker) build a Ctx and hand it
+ * to the tools/jira factories. Stdio derives Ctx from process.env once at
+ * startup; the Worker derives a fresh Ctx per user from KV-stored credentials.
+ *
+ * `refreshJira` is the seam that lets stdio support OAuth 2.0 PKCE without
+ * bundling oauth.ts (which uses fs/http/os) into the Worker. When set, the
+ * Jira factory invokes it before each request to swap in a freshly-refreshed
+ * access token. The Worker path leaves it undefined.
+ */
+export interface Ctx {
+  tempoApi: { baseUrl: string; token: string };
+  jiraApi: {
+    /** Site URL for basic/bearer, or api.atlassian.com/ex/jira/{cloudId} for oauth. */
+    baseUrl: string;
+    /** Static fallback token. Ignored when `refreshJira` is set. */
+    token: string;
+    /** Required for basic auth. */
+    email?: string;
+    authType: 'basic' | 'bearer' | 'oauth';
+    tempoAccountCustomFieldId?: string;
+  };
+  /**
+   * Resolves the current Jira bearer token. Set by stdio's OAuth path; left
+   * undefined for basic/bearer auth and for the Worker path. May also return a
+   * `baseUrl` override (the OAuth flow needs to swap to the Atlassian gateway
+   * once the cloudId is known).
+   */
+  refreshJira?: () => Promise<{ token: string; baseUrl?: string }>;
 }

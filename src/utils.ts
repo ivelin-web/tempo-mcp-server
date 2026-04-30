@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getIssueInfoById } from './jira.js';
+import { JiraClient } from './jira.js';
 
 /**
  * Standard error handling for API errors
@@ -33,6 +33,7 @@ export function extractWorklogIssueIds(worklogs: any[]): string[] {
  * labels so a single deleted issue doesn't break the whole response.
  */
 export async function getIssueInfoMap(
+  jira: JiraClient,
   issueIds: (string | number)[],
 ): Promise<Record<string, { key: string; summary: string }>> {
   const unique = [...new Set(issueIds.map(String))];
@@ -42,7 +43,7 @@ export async function getIssueInfoMap(
   await Promise.all(
     unique.map(async (issueId) => {
       try {
-        map[issueId] = await getIssueInfoById(issueId);
+        map[issueId] = await jira.getIssueInfoById(issueId);
       } catch (error) {
         console.error(
           `Could not get info for issue ID ${issueId}: ${(error as Error).message}`,
@@ -81,19 +82,15 @@ export function calculateEndTime(
   startTime: string,
   hoursSpent: number,
 ): string {
-  // Parse the HH:MM format
   const [hours, minutes] = startTime.split(':').map((num) => parseInt(num, 10));
 
-  // Create a Date object with today's date but with the given hours and minutes
   const startTimeDate = new Date();
   startTimeDate.setHours(hours, minutes, 0, 0);
 
-  // Add the duration in milliseconds
   const endTimeDate = new Date(
     startTimeDate.getTime() + hoursSpent * 3600 * 1000,
   );
 
-  // Format the end time as HH:MM
   const endTime = `${endTimeDate.getHours().toString().padStart(2, '0')}:${endTimeDate.getMinutes().toString().padStart(2, '0')}`;
 
   return endTime;
