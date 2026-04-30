@@ -29,10 +29,10 @@
   "kv_namespaces": [
     {
       "binding": "USERS",
-      // Run `npx wrangler kv namespace create USERS` and paste the returned id
-      // here before your first deploy. Each Cloudflare account has its own
-      // namespace ids; this is intentionally empty in the committed config.
-      "id": "",
+      // KV namespace id — public identifier, not a secret. If you forked the
+      // repo, run `npx wrangler kv namespace create USERS` and replace this
+      // value with the id Cloudflare returns for your account.
+      "id": "9bf87d2cb1084c07b40b5cd41694ea02",
     },
   ],
   // Per-IP rate limit on /setup POST: 5 submissions per minute. Cheap defense

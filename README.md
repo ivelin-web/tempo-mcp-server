@@ -73,9 +73,7 @@ npx wrangler login
 npx wrangler kv namespace create USERS
 ```
 
-> ⚠️ **Important:** copy the `id` returned by step 2 and paste it into [`wrangler.jsonc`](wrangler.jsonc) → `kv_namespaces[0].id`. The committed value is intentionally empty — `wrangler deploy` will fail with `KV namespace … is not valid` until you fill it in. KV namespace ids are per-account and aren't sensitive, but each fork needs its own.
->
-> If you want to keep your local id out of `git diff` after editing, run once: `git update-index --skip-worktree wrangler.jsonc`. Reverse with `--no-skip-worktree` when you need to commit other config changes.
+> ⚠️ **If you forked the repo:** the committed [`wrangler.jsonc`](wrangler.jsonc) `kv_namespaces[0].id` belongs to the upstream maintainer's Cloudflare account. Replace it with the id step 2 just returned, otherwise `wrangler deploy` will fail with `KV namespace … is not valid`. KV namespace ids are public per-account identifiers, not secrets, but each account has its own.
 
 ```bash
 # 3. Generate and store the encryption key.
