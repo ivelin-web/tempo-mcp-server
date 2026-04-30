@@ -1,0 +1,49 @@
+/**
+ * Cloudflare Workers config for the remote Tempo MCP server.
+ *
+ * Required setup before first deploy:
+ *   1) wrangler kv namespace create USERS
+ *      → paste the returned id below into kv_namespaces[0].id
+ *   2) wrangler secret put ENCRYPTION_KEY
+ *      → paste 32+ random bytes (e.g. `openssl rand -base64 48`); used to
+ *        AES-GCM-encrypt per-user credentials at rest in KV
+ *
+ * Local dev (`wrangler dev`) uses a local KV store and reads ENCRYPTION_KEY
+ * from .dev.vars (gitignored). See .dev.vars.example.
+ *
+ * The server is intentionally stateless (no Durable Objects). Each MCP
+ * request reads + decrypts the user's credentials from KV, builds a fresh
+ * McpServer for that request, and dispatches via the official Cloudflare
+ * `createMcpHandler` from the `agents` SDK. Credentials are never held in
+ * memory across requests.
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tempo-mcp-server",
+  "main": "src/remote/worker.ts",
+  "compatibility_date": "2026-01-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+  "kv_namespaces": [
+    {
+      "binding": "USERS",
+      // Run `npx wrangler kv namespace create USERS` and paste the returned id
+      // here before your first deploy. Each Cloudflare account has its own
+      // namespace ids; this is intentionally empty in the committed config.
+      "id": "",
+    },
+  ],
+  // Per-IP rate limit on /setup POST: 5 submissions per minute. Cheap defense
+  // against KV-write exhaustion on the free plan (1k writes/day) without any
+  // operator action. `namespace_id` is local to this Worker — pick any unique
+  // integer string.
+  "ratelimits": [
+    {
+      "name": "SETUP_RATE_LIMITER",
+      "namespace_id": "1",
+      "simple": { "limit": 5, "period": 60 },
+    },
+  ],
+}

@@ -14,7 +14,7 @@ function validateEnv() {
     // Format and display validation errors
     console.error('[ERROR] Environment validation failed:');
     if (error instanceof ZodError) {
-      error.errors.forEach((err) => {
+      error.issues.forEach((err) => {
         console.error(`- ${err.path.join('.')}: ${err.message}`);
       });
     } else {

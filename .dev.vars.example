@@ -1,0 +1,9 @@
+# Local dev secrets for `wrangler dev`. Copy to `.dev.vars` (gitignored).
+#
+# ENCRYPTION_KEY: 32+ random bytes, base64 or hex. Used to AES-GCM-encrypt
+# per-user Tempo+Jira credentials in Workers KV.
+# Generate with: openssl rand -base64 48
+ENCRYPTION_KEY=replace_with_openssl_rand_base64_48_output
+
+# Optional: pin a specific app origin for CORS. Defaults to "*" if unset.
+# ALLOWED_ORIGIN=https://claude.ai

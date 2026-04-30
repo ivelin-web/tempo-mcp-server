@@ -16,7 +16,7 @@ const weDontMindSlowerRulesAsTheyAreUsuallyTheBestBecauseTheyUseTypeInformation 
 export default tseslint.config(
   // Ignore some directories
   {
-    ignores: ['node_modules', 'dist', 'build', 'coverage'],
+    ignores: ['node_modules', 'dist', 'build', 'coverage', '.wrangler'],
   },
   // Some additional eslint configuration options
   {
@@ -29,6 +29,27 @@ export default tseslint.config(
           // allows configuration files (such as this file) to be linted even if it's not listed in the tsconfig.json
           allowDefaultProject: ['*.mjs', '*.js'],
         },
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ['src/**/*.ts'],
+    ignores: ['src/remote/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.node.json',
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ['src/remote/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.worker.json',
         tsconfigRootDir: import.meta.dirname,
       },
     },

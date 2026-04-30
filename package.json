@@ -8,14 +8,18 @@
     "tempo-mcp-server": "./build/index.js"
   },
   "scripts": {
-    "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
+    "build": "tsc -p tsconfig.node.json && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "start": "node build/index.js",
     "dev": "tsx watch src/index.ts",
     "inspect": "npx @modelcontextprotocol/inspector tsx src/index.ts",
     "prepare": "npm run build && husky",
     "lint": "eslint",
     "format": "prettier . --write",
-    "format:check": "prettier . --check"
+    "format:check": "prettier . --check",
+    "remote:dev": "wrangler dev",
+    "remote:deploy": "wrangler deploy",
+    "remote:typecheck": "tsc --noEmit -p tsconfig.worker.json",
+    "remote:tail": "wrangler tail"
   },
   "files": [
     "build",
@@ -45,11 +49,13 @@
   },
   "homepage": "https://github.com/ivelin-web/tempo-mcp-server#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.6.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "axios": "^1.6.7",
-    "zod": "^3.24.2"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260426.1",
+    "agents": "^0.11.9",
     "@eslint/js": "^9.28.0",
     "@types/node": "^20.11.0",
     "eslint": "^9.28.0",
@@ -60,7 +66,8 @@
     "prettier": "3.5.3",
     "tsx": "^4.7.0",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.34.0"
+    "typescript-eslint": "^8.34.0",
+    "wrangler": "^4.86.0"
   },
   "engines": {
     "node": ">=18.0.0"
