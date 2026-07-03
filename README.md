@@ -243,6 +243,7 @@ You can run the server directly with Node by pointing to the built JavaScript fi
      - **Worklogs** (View + Manage) — for all worklog tools
      - **Schemes** (View) — required for `getMissingWorklogDays` (reads the user-schedule)
      - **Accounts** (View) — only if your worklogs use Tempo accounts
+     - **Teams** (View) — only if you use the `program` / `team` filters (covers Teams and Programs)
    - Tempo does not allow editing scopes on an existing token; create a new one if you need to add scopes later.
 
 2. **Jira API Token**:
@@ -336,16 +337,35 @@ To find your custom field ID:
 1. Go to Jira Settings → Issues → Custom Fields
 2. Find your Tempo account field and note the ID from the URL or field configuration
 
+## Viewing Other Users' Worklogs
+
+The read tools (`retrieveWorklogs`, `getWorklogAnalytics`, `getMissingWorklogDays`) default to the token owner's own worklogs, but accept optional filters to target other people — useful for admins, PMs, and team leads:
+
+- `users` — array of emails, display names, or Jira accountIds (e.g. `["ivan@company.com", "Maria Petrova"]`)
+- `program` — Tempo Program name or id; expands to all current members of the program's teams
+- `team` — Tempo Team name or id; expands to all current team members
+
+Filters combine as a union. Tempo enforces permissions **server-side**: the API silently omits worklogs the token owner isn't allowed to see (no error is returned). To view other users you need:
+
+1. A Tempo **Permission Role** with **View Worklogs** granted to the token owner (Tempo > Settings > Permission Roles) — "Full" for everyone, or "Restricted" + selected teams
+2. Jira **Browse Projects** permission on the relevant projects
+3. The **Teams** scope on the Tempo API token if you use the `program` / `team` filters
+
+`getWorklogAnalytics` also supports `groupBy: "user"` — combined with `program`, it produces a per-person hours report in a single call. `getMissingWorklogDays` with a filter returns a per-user report of days with missing time (viewing other users' schedules is also permission-gated).
+
 ## Available Tools
 
 ### retrieveWorklogs
 
-Fetches worklogs for the configured user between start and end dates.
+Fetches worklogs for the configured user (or other users via filters) between start and end dates.
 
 ```
 Parameters:
 - startDate: String (YYYY-MM-DD)
 - endDate: String (YYYY-MM-DD)
+- users: String[] (optional) — emails, display names, or accountIds
+- program: String (optional) — Tempo Program name or id
+- team: String (optional) — Tempo Team name or id
 ```
 
 ### createWorklog
@@ -400,7 +420,7 @@ Parameters:
 
 ### getMissingWorklogDays
 
-Reports working days in a date range where the user has logged less time than expected. Expected hours per day come from the user's Tempo schedule, so holidays, non-working days, and part-time schedules are honoured automatically.
+Reports working days in a date range where the user has logged less time than expected. Expected hours per day come from the user's Tempo schedule, so holidays, non-working days, and part-time schedules are honoured automatically. With `users` / `program` / `team` it checks other people and returns a per-user report (sorted by most missing hours).
 
 ```
 Parameters:
@@ -408,19 +428,25 @@ Parameters:
 - endDate: String (YYYY-MM-DD)
 - minHoursPerDay: Number (optional) — override the per-day threshold;
                                       non-working days are still skipped
+- users: String[] (optional) — emails, display names, or accountIds
+- program: String (optional) — Tempo Program name or id
+- team: String (optional) — Tempo Team name or id
 ```
 
 > **Required Tempo scope:** the `TEMPO_API_TOKEN` must include the **Schemes** scope (covers Workload Schemes, Holiday Schemes, User Schedule) in addition to **Worklogs**. Tempo does not allow modifying scopes on an existing token — if your current token only has Worklogs, create a new one at Tempo > Settings > API Integration.
 
 ### getWorklogAnalytics
 
-Aggregates worklogs in a date range and returns hours, worklog count, and percentage per group, sorted by hours descending.
+Aggregates worklogs in a date range and returns hours, worklog count, and percentage per group, sorted by hours descending. Combine `groupBy: "user"` with `program` / `team` / `users` for a per-person report.
 
 ```
 Parameters:
 - startDate: String (YYYY-MM-DD)
 - endDate: String (YYYY-MM-DD)
-- groupBy: "issue" | "account" | "day" | "week" | "month" (optional, default "issue")
+- groupBy: "issue" | "account" | "user" | "day" | "week" | "month" (optional, default "issue")
+- users: String[] (optional) — emails, display names, or accountIds
+- program: String (optional) — Tempo Program name or id
+- team: String (optional) — Tempo Team name or id
 ```
 
 ## Project Structure
@@ -428,6 +454,7 @@ Parameters:
 ```
 tempo-mcp-server/
 ├── src/                  # Source code
+│   ├── authors.ts        # Author filter resolution (users/program/team → accountIds)
 │   ├── config.ts         # Configuration management
 │   ├── index.ts          # MCP server implementation
 │   ├── jira.ts           # Jira API integration

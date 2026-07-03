@@ -11,6 +11,8 @@ export interface JiraClient {
     key: string;
     tempoAccountId?: string;
   }>;
+  searchUsers(query: string): Promise<JiraUser[]>;
+  getUsersByAccountIds(accountIds: string[]): Promise<Record<string, JiraUser>>;
 }
 
 function basicAuthHeader(email: string, token: string): string {
@@ -116,6 +118,82 @@ export function createJiraClient(ctx: Ctx): JiraClient {
         }
         throw formatJiraError(myselfError, 'Failed to get user account ID');
       }
+    },
+
+    /**
+     * Search Jira users by display name or email.
+     *
+     * Requires the "Browse users and groups" global permission. When email
+     * visibility is restricted (Atlassian privacy settings), the server still
+     * matches the query against the email — the address is just absent from
+     * the response, so callers must handle results without `emailAddress`.
+     */
+    async searchUsers(query: string): Promise<JiraUser[]> {
+      try {
+        const jiraApi = await client();
+        const response = await jiraApi.get<JiraUser[]>(
+          '/rest/api/3/user/search',
+          { params: { query, maxResults: 50 } },
+        );
+        // Humans only — app/customer accounts can't author Tempo worklogs.
+        return (response.data || []).filter(
+          (u) => !u.accountType || u.accountType === 'atlassian',
+        );
+      } catch (error) {
+        throw formatJiraError(
+          error,
+          `Failed to search Jira users for "${query}" (requires the "Browse users and groups" permission)`,
+        );
+      }
+    },
+
+    /**
+     * Resolve accountIds to Jira users (for display names) via /user/bulk.
+     *
+     * Best effort: returns whatever resolves and swallows errors — display
+     * names are cosmetic, so a missing "Browse users and groups" permission
+     * degrades labels to accountIds instead of failing the tool call.
+     */
+    async getUsersByAccountIds(
+      accountIds: string[],
+    ): Promise<Record<string, JiraUser>> {
+      const unique = [...new Set(accountIds)];
+      const map: Record<string, JiraUser> = {};
+      if (unique.length === 0) return map;
+
+      const CHUNK_SIZE = 90;
+      try {
+        const jiraApi = await client();
+        for (let i = 0; i < unique.length; i += CHUNK_SIZE) {
+          const chunk = unique.slice(i, i + CHUNK_SIZE);
+          let startAt = 0;
+          let isLast = false;
+          while (!isLast) {
+            // accountId must repeat as accountId=a&accountId=b — build the
+            // query string manually to avoid Axios' array bracket encoding.
+            const params = new URLSearchParams();
+            chunk.forEach((id) => {
+              params.append('accountId', id);
+            });
+            params.set('maxResults', String(CHUNK_SIZE));
+            params.set('startAt', String(startAt));
+
+            const response = await jiraApi.get(
+              `/rest/api/3/user/bulk?${params.toString()}`,
+            );
+            const values: JiraUser[] = response.data?.values || [];
+            for (const user of values) map[user.accountId] = user;
+
+            isLast = response.data?.isLast !== false || values.length === 0;
+            startAt += values.length;
+          }
+        }
+      } catch (error) {
+        console.error(
+          `Could not resolve user display names: ${(error as Error).message}`,
+        );
+      }
+      return map;
     },
 
     /**

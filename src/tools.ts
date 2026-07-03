@@ -10,9 +10,16 @@ import {
   MissingWorklogDay,
   AnalyticsGroup,
   AnalyticsGroupBy,
+  AuthorFilter,
   Ctx,
 } from './types.js';
 import { createJiraClient, JiraClient } from './jira.js';
+import {
+  hasAuthorFilter,
+  resolveAuthorFilter,
+  userLabel,
+  ResolvedAuthor,
+} from './authors.js';
 import {
   formatError,
   getIssueInfoMap,
@@ -20,6 +27,7 @@ import {
   calculateEndTime,
   formatHours,
   formatPercent,
+  mapWithConcurrency,
 } from './utils.js';
 
 // Tempo's /worklogs endpoints accept up to limit=1000 per page (sibling
@@ -31,8 +39,20 @@ const TEMPO_PAGE_LIMIT = 1000;
 // worklogs / 100,000 schedule entries, well beyond any realistic query.
 const MAX_PAGES = 500;
 
+// Shown whenever a multi-user query returns suspiciously little — Tempo
+// filters by permission server-side instead of erroring.
+const VIEW_OTHERS_HINT =
+  'Note: Tempo silently omits worklogs the token owner has no permission to ' +
+  'view. To see other users, the person who created the TEMPO_API_TOKEN ' +
+  'needs a Permission Role with "View Worklogs" (Tempo > Settings > ' +
+  'Permission Roles) and Jira "Browse Projects" on the relevant projects.';
+
 export interface Tools {
-  retrieveWorklogs(startDate: string, endDate: string): Promise<ToolResponse>;
+  retrieveWorklogs(
+    startDate: string,
+    endDate: string,
+    filter?: AuthorFilter,
+  ): Promise<ToolResponse>;
   createWorklog(
     issueKey: string,
     timeSpentHours: number,
@@ -55,11 +75,13 @@ export interface Tools {
     startDate: string,
     endDate: string,
     minHoursPerDay?: number,
+    filter?: AuthorFilter,
   ): Promise<ToolResponse>;
   getWorklogAnalytics(
     startDate: string,
     endDate: string,
     groupBy?: AnalyticsGroupBy,
+    filter?: AuthorFilter,
   ): Promise<ToolResponse>;
 }
 
@@ -75,13 +97,71 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
     },
   });
 
+  // Resolve the optional author filter (users/program/team) to accountIds.
+  // Returns null when no filter is set — the "own worklogs" default path.
+  async function resolveAuthors(
+    filter?: AuthorFilter,
+  ): Promise<ResolvedAuthor[] | null> {
+    return hasAuthorFilter(filter)
+      ? await resolveAuthorFilter(api, jiraClient, filter)
+      : null;
+  }
+
+  // Multi-user fetch via POST /worklogs/search. Pagination is offset-based:
+  // `metadata.next` can't be followed directly since it requires re-POSTing
+  // the body, so its presence just signals another page.
+  async function searchWorklogsForAuthors(
+    startDate: string,
+    endDate: string,
+    authorIds: string[],
+  ): Promise<{ worklogs: any[]; pagesProcessed: number }> {
+    let allWorklogs: any[] = [];
+    let offset = 0;
+    let pageCount = 0;
+    let hasNext = true;
+
+    while (hasNext) {
+      if (pageCount >= MAX_PAGES) {
+        throw new Error(
+          `Reached maximum page limit (${MAX_PAGES}) while searching worklogs ` +
+            `for ${startDate}..${endDate}. Results would be incomplete — ` +
+            `narrow the date range and try again.`,
+        );
+      }
+
+      const response = await api.post(
+        '/worklogs/search',
+        { from: startDate, to: endDate, authorIds },
+        { params: { offset, limit: TEMPO_PAGE_LIMIT } },
+      );
+
+      allWorklogs = allWorklogs.concat(response.data.results || []);
+      hasNext = !!response.data.metadata?.next;
+      // Advance by the limit the server actually applied, in case it clamps
+      // our requested page size — otherwise we'd skip records.
+      offset += Number(response.data.metadata?.limit) || TEMPO_PAGE_LIMIT;
+      pageCount++;
+    }
+
+    return { worklogs: allWorklogs, pagesProcessed: pageCount };
+  }
+
   // Helper: paginated fetch from Tempo `metadata.next` URLs.
   // Tempo's "next" URLs are absolute and don't include the bearer header —
   // we re-attach it on each follow-up request.
+  // With `authorIds` set, fetches those users' worklogs instead of the
+  // token owner's.
   async function fetchAllWorklogs(
     startDate: string,
     endDate: string,
+    authorIds?: string[],
   ): Promise<{ worklogs: any[]; pagesProcessed: number }> {
+    // Length guard matters: an empty authorIds array would make the search
+    // return every worklog visible to the token instead of nothing.
+    if (authorIds && authorIds.length > 0) {
+      return searchWorklogsForAuthors(startDate, endDate, authorIds);
+    }
+
     const accountId = await jiraClient.getCurrentUserAccountId();
 
     let allWorklogs: any[] = [];
@@ -142,6 +222,7 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
     accountId: string,
     startDate: string,
     endDate: string,
+    forOtherUser = false,
   ): Promise<DaySchedule[]> {
     let allDays: DaySchedule[] = [];
     let nextUrl: string | null = null;
@@ -186,12 +267,16 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 403) {
         throw new Error(
-          'Tempo API returned 403 for /user-schedule. Your TEMPO_API_TOKEN ' +
-            'is missing the "Schemes" scope (which covers Workload Schemes, ' +
-            'Holiday Schemes, and User Schedule). Tempo does not allow ' +
-            'modifying scopes on an existing token — create a new token at ' +
-            'Tempo > Settings > API Integration with both "Worklogs" and ' +
-            '"Schemes" scopes, then update TEMPO_API_TOKEN.',
+          forOtherUser
+            ? `Tempo API returned 403 for /user-schedule/${accountId}. Either ` +
+              'the TEMPO_API_TOKEN is missing the "Schemes" scope, or the ' +
+              "token owner has no permission to view this user's schedule."
+            : 'Tempo API returned 403 for /user-schedule. Your TEMPO_API_TOKEN ' +
+              'is missing the "Schemes" scope (which covers Workload Schemes, ' +
+              'Holiday Schemes, and User Schedule). Tempo does not allow ' +
+              'modifying scopes on an existing token — create a new token at ' +
+              'Tempo > Settings > API Integration with both "Worklogs" and ' +
+              '"Schemes" scopes, then update TEMPO_API_TOKEN.',
         );
       }
       throw error;
@@ -218,15 +303,180 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
     return null;
   }
 
+  interface PerUserMissing {
+    author: ResolvedAuthor;
+    missing?: MissingWorklogDay[];
+    missingHours: number;
+    noSchedule?: boolean;
+    error?: string;
+  }
+
+  // Multi-user variant of getMissingWorklogDays: one worklog search covering
+  // all authors + one schedule fetch per author (bounded concurrency), then a
+  // per-user report sorted by most missing hours first.
+  async function missingWorklogDaysForUsers(
+    startDate: string,
+    endDate: string,
+    overrideSeconds: number | null,
+    authors: ResolvedAuthor[],
+  ): Promise<ToolResponse> {
+    const { worklogs } = await fetchAllWorklogs(
+      startDate,
+      endDate,
+      authors.map((a) => a.accountId),
+    );
+
+    const worklogsByAuthor = new Map<string, any[]>();
+    for (const w of worklogs) {
+      const id = w.author?.accountId;
+      if (!id) continue;
+      let list = worklogsByAuthor.get(id);
+      if (!list) {
+        list = [];
+        worklogsByAuthor.set(id, list);
+      }
+      list.push(w);
+    }
+
+    const perUser = await mapWithConcurrency(
+      authors,
+      5,
+      async (author): Promise<PerUserMissing> => {
+        try {
+          const schedule = await fetchUserSchedule(
+            author.accountId,
+            startDate,
+            endDate,
+            true,
+          );
+          if (schedule.length === 0) {
+            return { author, missingHours: 0, noSchedule: true };
+          }
+          const missing = computeMissingDays(
+            schedule,
+            worklogsByAuthor.get(author.accountId) ?? [],
+            overrideSeconds,
+          );
+          const missingHours = missing.reduce((s, d) => s + d.missingHours, 0);
+          return { author, missing, missingHours };
+        } catch (error) {
+          return { author, missingHours: 0, error: formatError(error) };
+        }
+      },
+    );
+
+    const withMissing = perUser
+      .filter((u) => (u.missing?.length ?? 0) > 0)
+      .sort((a, b) => b.missingHours - a.missingHours);
+    const clean = perUser.filter((u) => u.missing && u.missing.length === 0);
+    const noSchedule = perUser.filter((u) => u.noSchedule);
+    const failed = perUser.filter((u) => u.error);
+
+    const partialIssueIds = new Set<string>();
+    for (const u of withMissing) {
+      for (const m of u.missing ?? []) {
+        for (const b of m.loggedBreakdown ?? []) {
+          if (b.issueId !== 'unknown') partialIssueIds.add(b.issueId);
+        }
+      }
+    }
+    const issueInfoMap =
+      partialIssueIds.size > 0
+        ? await getIssueInfoMap(jiraClient, Array.from(partialIssueIds))
+        : {};
+
+    const totalMissingHours = withMissing.reduce(
+      (s, u) => s + u.missingHours,
+      0,
+    );
+    const totalMissingDays = withMissing.reduce(
+      (s, u) => s + (u.missing?.length ?? 0),
+      0,
+    );
+
+    const userWord = authors.length === 1 ? 'user' : 'users';
+    const lines: string[] = [
+      `Missing worklogs · ${startDate} to ${endDate} · ${withMissing.length} of ${authors.length} ${userWord} below expected hours · total missing ${formatHours(totalMissingHours)}`,
+    ];
+
+    for (const u of withMissing) {
+      const days = u.missing ?? [];
+      const dayWord = days.length === 1 ? 'day' : 'days';
+      lines.push('');
+      lines.push(
+        `${u.author.label} — missing ${formatHours(u.missingHours)} across ${days.length} ${dayWord}`,
+      );
+      for (const d of days) {
+        const typeBadge = d.type === 'WORKING_DAY' ? '' : ` [${d.type}]`;
+        const holidayBadge = d.holiday ? ` (${d.holiday})` : '';
+        lines.push(
+          `  ${d.date}${typeBadge}${holidayBadge} — missing ${formatHours(d.missingHours)} (${formatHours(d.loggedHours)} of ${formatHours(d.expectedHours)} logged)`,
+        );
+        for (const b of d.loggedBreakdown ?? []) {
+          const info = issueInfoMap[b.issueId];
+          const label = info
+            ? info.summary
+              ? `${info.key} — ${info.summary}`
+              : info.key
+            : b.issueId === 'unknown'
+              ? 'Unknown issue'
+              : `Issue ${b.issueId}`;
+          lines.push(`      ${label}: ${formatHours(b.hours)}`);
+        }
+      }
+    }
+
+    if (clean.length > 0) {
+      lines.push('');
+      lines.push(
+        `All expected hours logged (${clean.length}): ${clean.map((u) => u.author.label).join(', ')}`,
+      );
+    }
+    if (noSchedule.length > 0) {
+      lines.push('');
+      lines.push(
+        `No workload schedule for this period (${noSchedule.length}): ${noSchedule.map((u) => u.author.label).join(', ')}`,
+      );
+    }
+    if (failed.length > 0) {
+      lines.push('');
+      lines.push('Could not check (schedule unavailable):');
+      for (const u of failed) {
+        lines.push(`  ${u.author.label}: ${u.error}`);
+      }
+    }
+
+    return {
+      content: [{ type: 'text', text: lines.join('\n') }],
+      metadata: {
+        totalMissingDays,
+        totalMissingHours,
+        startDate,
+        endDate,
+        users: perUser.map((u) => ({
+          accountId: u.author.accountId,
+          label: u.author.label,
+          missingDays: u.missing?.length ?? 0,
+          missingHours: u.missingHours,
+          ...(u.noSchedule ? { noSchedule: true } : {}),
+          ...(u.error ? { error: u.error } : {}),
+        })),
+      },
+    };
+  }
+
   return {
     async retrieveWorklogs(
       startDate: string,
       endDate: string,
+      filter?: AuthorFilter,
     ): Promise<ToolResponse> {
       try {
+        const authors = await resolveAuthors(filter);
         const { worklogs, pagesProcessed } = await fetchAllWorklogs(
           startDate,
           endDate,
+          authors?.map((a) => a.accountId),
         );
 
         if (worklogs.length === 0) {
@@ -234,7 +484,9 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
             content: [
               {
                 type: 'text',
-                text: 'No worklogs found for the specified date range.',
+                text: authors
+                  ? `No worklogs found for the specified users between ${startDate} and ${endDate}. ${VIEW_OTHERS_HINT}`
+                  : 'No worklogs found for the specified date range.',
               },
             ],
           };
@@ -243,6 +495,10 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
         const issueInfoMap = await getIssueInfoMap(
           jiraClient,
           extractWorklogIssueIds(worklogs),
+        );
+
+        const authorLabels = new Map(
+          (authors ?? []).map((a) => [a.accountId, a.label]),
         );
 
         const formattedContent = worklogs.map((worklog: any) => {
@@ -257,12 +513,49 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
           const attributesInfo = attributeValues?.length
             ? ` | Attributes: ${JSON.stringify(attributeValues)}`
             : '';
+          const authorInfo = authors
+            ? `Author: ${authorLabels.get(worklog.author?.accountId) || worklog.author?.accountId || 'Unknown'} | `
+            : '';
 
           return {
             type: 'text' as const,
-            text: `TempoWorklogId: ${tempoWorklogId} | IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date}${startTime ? ` | StartTime: ${startTime}` : ''} | Hours: ${timeSpentHours} | Description: ${description}${attributesInfo}`,
+            text: `${authorInfo}TempoWorklogId: ${tempoWorklogId} | IssueKey: ${issueKey} | IssueId: ${issueId} | Date: ${date}${startTime ? ` | StartTime: ${startTime}` : ''} | Hours: ${timeSpentHours} | Description: ${description}${attributesInfo}`,
           };
         });
+
+        if (authors) {
+          const perAuthor = new Map<
+            string,
+            { count: number; seconds: number }
+          >();
+          for (const w of worklogs) {
+            const id = w.author?.accountId ?? 'unknown';
+            const agg = perAuthor.get(id) ?? { count: 0, seconds: 0 };
+            agg.count += 1;
+            agg.seconds += Number(w.timeSpentSeconds ?? 0);
+            perAuthor.set(id, agg);
+          }
+
+          const userWord = authors.length === 1 ? 'user' : 'users';
+          const summaryLines = [
+            `Worklogs for ${authors.length} ${userWord} · ${startDate} to ${endDate} · ${worklogs.length} worklogs`,
+          ];
+          for (const author of authors) {
+            const agg = perAuthor.get(author.accountId);
+            summaryLines.push(
+              agg
+                ? `${author.label}: ${agg.count} worklogs · ${formatHours(agg.seconds / 3600)}`
+                : `${author.label}: no worklogs`,
+            );
+          }
+          if (authors.some((a) => !perAuthor.has(a.accountId))) {
+            summaryLines.push('', VIEW_OTHERS_HINT);
+          }
+          formattedContent.unshift({
+            type: 'text' as const,
+            text: summaryLines.join('\n'),
+          });
+        }
 
         return {
           content: formattedContent,
@@ -271,6 +564,12 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
             pagesProcessed,
             startDate,
             endDate,
+            ...(authors && {
+              users: authors.map((a) => ({
+                accountId: a.accountId,
+                label: a.label,
+              })),
+            }),
           },
         };
       } catch (error) {
@@ -585,11 +884,25 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
       startDate: string,
       endDate: string,
       minHoursPerDay?: number,
+      filter?: AuthorFilter,
     ): Promise<ToolResponse> {
       const rangeError = validateDateRange(startDate, endDate);
       if (rangeError) return rangeError;
 
+      const overrideSeconds =
+        minHoursPerDay !== undefined ? Math.round(minHoursPerDay * 3600) : null;
+
       try {
+        const authors = await resolveAuthors(filter);
+        if (authors) {
+          return await missingWorklogDaysForUsers(
+            startDate,
+            endDate,
+            overrideSeconds,
+            authors,
+          );
+        }
+
         const accountId = await jiraClient.getCurrentUserAccountId();
 
         const [schedule, { worklogs }] = await Promise.all([
@@ -614,52 +927,7 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
           };
         }
 
-        const loggedByDate = new Map<string, Map<string, number>>();
-        for (const w of worklogs) {
-          const date = w.startDate;
-          if (!date) continue;
-          const issueId = w.issue?.id ? String(w.issue.id) : 'unknown';
-          const issueMap = loggedByDate.get(date) ?? new Map<string, number>();
-          issueMap.set(
-            issueId,
-            (issueMap.get(issueId) ?? 0) + Number(w.timeSpentSeconds ?? 0),
-          );
-          loggedByDate.set(date, issueMap);
-        }
-
-        const overrideSeconds =
-          minHoursPerDay !== undefined
-            ? Math.round(minHoursPerDay * 3600)
-            : null;
-
-        const missing: MissingWorklogDay[] = [];
-        for (const day of schedule) {
-          if (day.requiredSeconds <= 0) continue;
-
-          const requiredSeconds = overrideSeconds ?? day.requiredSeconds;
-          const dayIssues = loggedByDate.get(day.date);
-          const loggedSeconds = dayIssues
-            ? Array.from(dayIssues.values()).reduce((s, v) => s + v, 0)
-            : 0;
-          if (loggedSeconds >= requiredSeconds) continue;
-
-          const breakdown = dayIssues
-            ? Array.from(dayIssues.entries()).map(([issueId, seconds]) => ({
-                issueId,
-                hours: seconds / 3600,
-              }))
-            : [];
-
-          missing.push({
-            date: day.date,
-            type: day.type,
-            expectedHours: requiredSeconds / 3600,
-            loggedHours: loggedSeconds / 3600,
-            missingHours: (requiredSeconds - loggedSeconds) / 3600,
-            ...(day.holiday?.name ? { holiday: day.holiday.name } : {}),
-            ...(breakdown.length > 0 ? { loggedBreakdown: breakdown } : {}),
-          });
-        }
+        const missing = computeMissingDays(schedule, worklogs, overrideSeconds);
 
         const partialIssueIds = new Set<string>();
         for (const m of missing) {
@@ -746,19 +1014,27 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
       startDate: string,
       endDate: string,
       groupBy: AnalyticsGroupBy = 'issue',
+      filter?: AuthorFilter,
     ): Promise<ToolResponse> {
       const rangeError = validateDateRange(startDate, endDate);
       if (rangeError) return rangeError;
 
       try {
-        const { worklogs } = await fetchAllWorklogs(startDate, endDate);
+        const authors = await resolveAuthors(filter);
+        const { worklogs } = await fetchAllWorklogs(
+          startDate,
+          endDate,
+          authors?.map((a) => a.accountId),
+        );
 
         if (worklogs.length === 0) {
           return {
             content: [
               {
                 type: 'text',
-                text: `No worklogs found between ${startDate} and ${endDate}.`,
+                text: authors
+                  ? `No worklogs found for the specified users between ${startDate} and ${endDate}. ${VIEW_OTHERS_HINT}`
+                  : `No worklogs found between ${startDate} and ${endDate}.`,
               },
             ],
             metadata: {
@@ -779,9 +1055,29 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
           );
         }
 
+        // Labels for the 'user' grouping: resolved-filter labels first, then a
+        // best-effort Jira lookup for any authors not covered by the filter.
+        const authorLabels: Record<string, string> = {};
+        if (groupBy === 'user') {
+          for (const a of authors ?? []) authorLabels[a.accountId] = a.label;
+          const unknownIds = [
+            ...new Set(
+              worklogs
+                .map((w: any) => w.author?.accountId)
+                .filter((id: any): id is string => !!id && !authorLabels[id]),
+            ),
+          ];
+          if (unknownIds.length > 0) {
+            const users = await jiraClient.getUsersByAccountIds(unknownIds);
+            for (const [id, user] of Object.entries(users)) {
+              authorLabels[id] = userLabel(user);
+            }
+          }
+        }
+
         const buckets = new Map<string, { seconds: number; count: number }>();
         for (const w of worklogs) {
-          const key = computeGroupKey(w, groupBy, issueInfoMap);
+          const key = computeGroupKey(w, groupBy, issueInfoMap, authorLabels);
           const bucket = buckets.get(key) ?? { seconds: 0, count: 0 };
           bucket.seconds += Number(w.timeSpentSeconds ?? 0);
           bucket.count += 1;
@@ -805,8 +1101,11 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
 
         const worklogWord = worklogs.length === 1 ? 'worklog' : 'worklogs';
         const groupWord = groups.length === 1 ? 'group' : 'groups';
+        const usersInfo = authors
+          ? ` · ${authors.length} ${authors.length === 1 ? 'user' : 'users'}`
+          : '';
         const lines: string[] = [
-          `Worklog analytics · ${startDate} to ${endDate} · grouped by ${groupBy}`,
+          `Worklog analytics · ${startDate} to ${endDate} · grouped by ${groupBy}${usersInfo}`,
           `Total: ${formatHours(totalHours)} across ${worklogs.length} ${worklogWord} in ${groups.length} ${groupWord}`,
           '',
         ];
@@ -831,6 +1130,12 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
             startDate,
             endDate,
             details: groups,
+            ...(authors && {
+              users: authors.map((a) => ({
+                accountId: a.accountId,
+                label: a.label,
+              })),
+            }),
           },
         };
       } catch (error) {
@@ -846,6 +1151,62 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
       }
     },
   };
+}
+
+/**
+ * Compare a user's schedule against their logged time and return the days
+ * that fall short. `overrideSeconds` replaces the schedule's required time
+ * per day when set; non-working days (requiredSeconds <= 0) are skipped
+ * either way.
+ */
+function computeMissingDays(
+  schedule: DaySchedule[],
+  worklogs: any[],
+  overrideSeconds: number | null,
+): MissingWorklogDay[] {
+  const loggedByDate = new Map<string, Map<string, number>>();
+  for (const w of worklogs) {
+    const date = w.startDate;
+    if (!date) continue;
+    const issueId = w.issue?.id ? String(w.issue.id) : 'unknown';
+    const issueMap = loggedByDate.get(date) ?? new Map<string, number>();
+    issueMap.set(
+      issueId,
+      (issueMap.get(issueId) ?? 0) + Number(w.timeSpentSeconds ?? 0),
+    );
+    loggedByDate.set(date, issueMap);
+  }
+
+  const missing: MissingWorklogDay[] = [];
+  for (const day of schedule) {
+    if (day.requiredSeconds <= 0) continue;
+
+    const requiredSeconds = overrideSeconds ?? day.requiredSeconds;
+    const dayIssues = loggedByDate.get(day.date);
+    const loggedSeconds = dayIssues
+      ? Array.from(dayIssues.values()).reduce((s, v) => s + v, 0)
+      : 0;
+    if (loggedSeconds >= requiredSeconds) continue;
+
+    const breakdown = dayIssues
+      ? Array.from(dayIssues.entries()).map(([issueId, seconds]) => ({
+          issueId,
+          hours: seconds / 3600,
+        }))
+      : [];
+
+    missing.push({
+      date: day.date,
+      type: day.type,
+      expectedHours: requiredSeconds / 3600,
+      loggedHours: loggedSeconds / 3600,
+      missingHours: (requiredSeconds - loggedSeconds) / 3600,
+      ...(day.holiday?.name ? { holiday: day.holiday.name } : {}),
+      ...(breakdown.length > 0 ? { loggedBreakdown: breakdown } : {}),
+    });
+  }
+
+  return missing;
 }
 
 /**
@@ -901,6 +1262,7 @@ function computeGroupKey(
   worklog: any,
   groupBy: AnalyticsGroupBy,
   issueInfoMap: Record<string, { key: string; summary: string }>,
+  authorLabels: Record<string, string> = {},
 ): string {
   switch (groupBy) {
     case 'issue': {
@@ -915,6 +1277,11 @@ function computeGroupKey(
         (a: { key: string }) => a.key === '_Account_',
       );
       return accountAttr?.value || 'No account';
+    }
+    case 'user': {
+      const accountId = worklog.author?.accountId;
+      if (!accountId) return 'Unknown user';
+      return authorLabels[accountId] || accountId;
     }
     case 'day':
       return worklog.startDate || 'Unknown date';

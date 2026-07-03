@@ -72,10 +72,42 @@ export const worklogEntrySchema = z.object({
 
 export type WorklogEntry = z.infer<typeof worklogEntrySchema>;
 
+// Author filter — lets the read tools target other users' worklogs instead of
+// the token owner's. All fields resolve to Jira accountIds and are unioned
+// when combined. Tempo enforces permissions server-side: worklogs the token
+// owner may not view are silently omitted from results.
+export const authorFilterShape = {
+  users: z
+    .array(z.string().min(1))
+    .optional()
+    .describe(
+      'Fetch worklogs of these users instead of your own. Each entry may be an email, a display name, or a Jira accountId.',
+    ),
+  program: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Fetch worklogs of all current members of this Tempo Program (name or numeric id).',
+    ),
+  team: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Fetch worklogs of all current members of this Tempo Team (name or numeric id).',
+    ),
+};
+
+export const authorFilterSchema = z.object(authorFilterShape);
+
+export type AuthorFilter = z.infer<typeof authorFilterSchema>;
+
 // MCP tool schemas
 export const retrieveWorklogsSchema = z.object({
   startDate: dateSchema(),
   endDate: dateSchema(),
+  ...authorFilterShape,
 });
 
 export const createWorklogSchema = z.object({
@@ -113,11 +145,13 @@ export const getMissingWorklogDaysSchema = z.object({
     .number()
     .positive('minHoursPerDay must be positive')
     .optional(),
+  ...authorFilterShape,
 });
 
 export const analyticsGroupBySchema = z.enum([
   'issue',
   'account',
+  'user',
   'day',
   'week',
   'month',
@@ -129,6 +163,7 @@ export const getWorklogAnalyticsSchema = z.object({
   startDate: dateSchema(),
   endDate: dateSchema(),
   groupBy: analyticsGroupBySchema.optional().default('issue'),
+  ...authorFilterShape,
 });
 
 // API interfaces
@@ -136,6 +171,8 @@ export interface JiraUser {
   accountId: string;
   emailAddress?: string;
   displayName?: string;
+  /** 'atlassian' for humans; 'app' / 'customer' accounts can't log Tempo time. */
+  accountType?: string;
 }
 
 export interface TempoWorklog {

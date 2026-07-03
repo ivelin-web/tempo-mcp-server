@@ -82,10 +82,18 @@ async function startServer(): Promise<void> {
 
     server.registerTool(
       'retrieveWorklogs',
-      { inputSchema: retrieveWorklogsSchema.shape },
-      async ({ startDate, endDate }) => {
+      {
+        description:
+          "Retrieve Tempo worklogs in a date range. Defaults to the authenticated user's own worklogs. Optional filters fetch other users' worklogs instead: 'users' (emails, display names, or accountIds), 'program' / 'team' (all current members of the Tempo program/team; name or id). Filters combine as a union. Viewing others requires the Tempo token owner to have a Permission Role with 'View Worklogs' plus Jira 'Browse Projects' — otherwise Tempo silently returns only permitted worklogs.",
+        inputSchema: retrieveWorklogsSchema.shape,
+      },
+      async ({ startDate, endDate, users, program, team }) => {
         try {
-          const result = await tools.retrieveWorklogs(startDate, endDate);
+          const result = await tools.retrieveWorklogs(startDate, endDate, {
+            users,
+            program,
+            team,
+          });
           return {
             content: result.content,
             ...(result.isError && { isError: true }),
@@ -247,15 +255,16 @@ async function startServer(): Promise<void> {
       'getMissingWorklogDays',
       {
         description:
-          "Find working days in a date range where the user's logged time is below the expected hours from their Tempo user-schedule. Holidays and non-working days are skipped automatically. Returns days with their expected vs logged hours, plus a per-issue breakdown for partially-logged days. Requires the 'Schemes' scope on the Tempo API token (in addition to 'Worklogs').",
+          "Find working days in a date range where the user's logged time is below the expected hours from their Tempo user-schedule. Holidays and non-working days are skipped automatically. Returns days with their expected vs logged hours, plus a per-issue breakdown for partially-logged days. Requires the 'Schemes' scope on the Tempo API token (in addition to 'Worklogs'). Pass 'users' / 'program' / 'team' to check other people instead — returns a per-user report (requires permission to view their worklogs and schedules).",
         inputSchema: getMissingWorklogDaysSchema.shape,
       },
-      async ({ startDate, endDate, minHoursPerDay }) => {
+      async ({ startDate, endDate, minHoursPerDay, users, program, team }) => {
         try {
           const result = await tools.getMissingWorklogDays(
             startDate,
             endDate,
             minHoursPerDay,
+            { users, program, team },
           );
           return {
             content: result.content,
@@ -282,15 +291,16 @@ async function startServer(): Promise<void> {
       'getWorklogAnalytics',
       {
         description:
-          "Aggregate worklogs in a date range and return hours, worklog count, and percentage per group, sorted by hours descending. groupBy options: 'issue' (default), 'account', 'day', 'week' (ISO 8601), 'month'. Note: 'account' grouping reads the _Account_ work attribute on each worklog — worklogs without an account attribute are bucketed as 'No account', so this grouping is only meaningful if your team uses Tempo accounts.",
+          "Aggregate worklogs in a date range and return hours, worklog count, and percentage per group, sorted by hours descending. groupBy options: 'issue' (default), 'account', 'user', 'day', 'week' (ISO 8601), 'month'. Pass 'users' / 'program' / 'team' to analyze other people's worklogs (e.g. groupBy 'user' + program gives a per-person report for the whole program; requires 'View Worklogs' permission). Note: 'account' grouping reads the _Account_ work attribute on each worklog — worklogs without an account attribute are bucketed as 'No account', so this grouping is only meaningful if your team uses Tempo accounts.",
         inputSchema: getWorklogAnalyticsSchema.shape,
       },
-      async ({ startDate, endDate, groupBy }) => {
+      async ({ startDate, endDate, groupBy, users, program, team }) => {
         try {
           const result = await tools.getWorklogAnalytics(
             startDate,
             endDate,
             groupBy,
+            { users, program, team },
           );
           return {
             content: result.content,
