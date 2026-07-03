@@ -164,8 +164,7 @@ async function resolveProgramTeamIds(
 ): Promise<number[]> {
   let programs: NamedRef[];
   try {
-    const response = await tempo.get('/programs');
-    programs = response.data?.results || [];
+    programs = await fetchAllTempoPages(tempo, '/programs', { limit: 100 });
   } catch (error) {
     throwWithTeamsScopeHint(error, 'programs');
   }
