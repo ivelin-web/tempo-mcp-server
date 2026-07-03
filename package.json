@@ -5,7 +5,7 @@
   "main": "build/index.js",
   "type": "module",
   "bin": {
-    "tempo-mcp-server": "./build/index.js"
+    "tempo-mcp-server": "build/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.node.json && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
