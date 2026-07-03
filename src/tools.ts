@@ -446,6 +446,15 @@ export function createTools(ctx: Ctx, jira?: JiraClient): Tools {
       }
     }
 
+    // A user whose schedule is visible but whose worklogs are hidden by Tempo
+    // permissions would otherwise read as "logged nothing" — a false signal.
+    if (authors.some((a) => !worklogsByAuthor.has(a.accountId))) {
+      lines.push('');
+      lines.push(
+        `Some users have no visible worklogs in this range. ${VIEW_OTHERS_HINT}`,
+      );
+    }
+
     return {
       content: [{ type: 'text', text: lines.join('\n') }],
       metadata: {
